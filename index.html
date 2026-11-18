@@ -300,9 +300,9 @@ const DEFAULT_SETTINGS = {
   pick: { summer: '12:15', winter: '12:45' },
   driveMin: 15,
   lunch: '14:30', leave: '15:00', workStart: '16:00', workEnd: '22:00', sleep: '22:45',
-  installEnd: '16:00', visitStart: '09:00', visitEnd: '12:00', showroomLeave: '20:00', homeDrive: 15, pickOnInstall: false, friOffDefault: 'pm', friTripTime: '15:00', friOut: '09:30', friPrep: '08:30',
+  familyEvery: 2, installEnd: '16:00', visitStart: '09:00', visitEnd: '12:00', showroomLeave: '20:00', homeDrive: 15, pickOnInstall: false, friOffDefault: 'pm', friTripTime: '15:00', friOut: '09:30', friPrep: '08:30',
   alerts: { prayer: true, wake: true, pick: true, work: true, wird: true, pre: 10 },
-  sounds: { fajr: 'bell', dhuhr: 'bell', asr: 'bell', maghrib: 'bell', isha: 'bell', task: 'chime', block: 'soft' }
+  sounds: { fajr: 'bell', dhuhr: 'bell', asr: 'bell', maghrib: 'bell', isha: 'bell', task: 'urgent', block: 'soft' }
 };
 function seasonOf(k, S) {
   if (S.season === 'summer' || S.season === 'winter') return S.season;
@@ -367,7 +367,6 @@ function buildDay(k, S, dayType, opt = {}) {
   } else if (!off) {
     add('office', toMin(S.workStart), 'الدوام في معرض الديكور', 'work', { span: true, dur: toMin(S.workEnd) - toMin(S.workStart) });
     add('quotes', toMin(S.workStart) + 15, 'متابعة العملاء وعروض الأسعار', 'work', { dur: 45 });
-    if (!visit) add('family', toMin(S.workStart) + 65, 'التواصل مع الأهل والأصدقاء', 'family', { dur: 30, link: 'family' });
   } else if (mode === 'pm') {
     const ts = toMin(S.friTripTime || '15:00');
     add('trip', ts, 'خرجة عائلية بعد الغداء (منتزه أو حديقة)', 'family', { span: true, dur: Math.max(60, P.maghrib - ts) });
@@ -377,8 +376,9 @@ function buildDay(k, S, dayType, opt = {}) {
   const relax = fri && off;
   if (!install && !relax) add('learn_pm', P.maghrib + 25, 'ساعة تطوير مهارات', 'growth', { dur: 45, link: 'growth' });
   add('isha', P.isha, 'صلاة العشاء', 'prayer', { prayer: 'isha' });
-  if (!install && !relax) add('suppliers_pm', P.isha + 25, 'تطوير المحل: ' + SHOPDEV[idx % SHOPDEV.length], 'work', { dur: 40, link: 'suppliers' });
-  if (off) add('family', P.isha + 70, 'التواصل مع الأهل والأصدقاء', 'family', { dur: 30, link: 'family' });
+  const thu = wd === 4, every = Math.max(1, S.familyEvery || 2), famOn = install ? thu : (fri || thu || ((diffDays('2026-01-01', k) % every) + every) % every === 0);
+  if (!install && !relax) add('suppliers_pm', P.isha + (famOn ? 50 : 25), 'تطوير المحل: ' + SHOPDEV[idx % SHOPDEV.length], 'work', { dur: 40, link: 'suppliers' });
+  if (famOn) add('family', install ? Math.max(P.isha + 15, arrive + 120) : P.isha + 15, thu ? 'رسالة الجمعة للأهل والأصدقاء (بعد العشاء)' : (fri ? 'التواصل مع الأهل والأصدقاء (الجمعة)' : 'التواصل مع الأهل والأصدقاء (بعد العشاء)'), 'family', { dur: 30, link: thu ? 'famsg' : 'family' });
   const wEnd = off ? P.isha + 120 : install ? toMin(S.sleep) - 5 : toMin(S.workEnd);
   add('review', wEnd - 15, 'مراجعة اليوم وتخطيط الغد', 'general', { dur: 15 });
   add('sleep', toMin(S.sleep), 'الاستعداد للنوم (أذكار النوم)', 'faith');
@@ -548,17 +548,18 @@ function deepMerge(b, o) {
   const r = { ...b }; for (const k in o) r[k] = k in b ? deepMerge(b[k], o[k]) : o[k]; return r;
 }
 
-const APP_VER = '9.1 · زيارة العميل ٩–١٢ + أنواع الأيام والجمعة';
+const APP_VER = '10 · إشعارات المهام + تواصل الأهل + جهات الاتصال';
 if("serviceWorker"in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
 const LS = 'asad.state.v1', LSAI = 'asad.ai.v1', LSSND = 'asad.sounds.v1', LSFIRED = 'asad.fired.v1';
 const DEF = {
   settings: { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), defaultDay: 'free', theme: 'auto', fridayRule: 'odd_off', bottomSpace: 'auto', name: '', prayerOn: { fajr: true, dhuhr: true, asr: true, maghrib: true, isha: true } },
-  done: {}, dayType: {}, dayOpt: {}, tasks: [], wird: { pos: 0, pace: 2, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
+  done: {}, dayType: {}, dayOpt: {}, contacts: [], tasks: [], wird: { pos: 0, pace: 2, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
 };
 DEF.settings.sounds.wake = 'long';
 let ST = deepMerge(JSON.parse(JSON.stringify(DEF)), rd(LS, {}));
 let SND = rd(LSSND, []);
 let FIRED = rd(LSFIRED, {});
+if (!ST.settings.soundV2) { ST.settings.sounds.task = 'urgent'; ST.settings.soundV2 = 1; }
 let saveT = null;
 function save() { clearTimeout(saveT); saveT = setTimeout(() => { pruneDone(); wr(LS, ST); }, 250); }
 function pruneDone() {
@@ -607,9 +608,10 @@ const PATTERNS = {
   chime: () => { [659.25, 783.99, 987.77].forEach((f, i) => tone(f, i * .22, .9, 'triangle', .22)); return 1.4; },
   beep: () => { [0, .35, .7].forEach(t => tone(1000, t, .2, 'square', .1)); return 1.1; },
   soft: () => { tone(523.25, 0, 1.2, 'sine', .2); tone(659.25, .25, 1.2, 'sine', .15); return 1.5; },
+  urgent: () => { [0, .45, .9, 1.35].forEach((t, i) => { tone(i % 2 ? 1046.5 : 784, t, .32, 'square', .13); tone(i % 2 ? 1568 : 1174.7, t + .12, .28, 'triangle', .13); }); return 1.9; },
   long: () => { [392, 440, 523.25, 587.33, 523.25, 440, 392, 349.23].forEach((f, i) => tone(f, i * .5, .7, 'sine', .22)); return 4.2; }
 };
-const SOUND_NAMES = { bell: 'جرس', chime: 'رنين متصاعد', beep: 'نغمة تنبيه', soft: 'نغمة هادئة', long: 'لحن طويل' };
+const SOUND_NAMES = { urgent: 'منبّه المهام (قوي)', bell: 'جرس', chime: 'رنين متصاعد', beep: 'نغمة تنبيه', soft: 'نغمة هادئة', long: 'لحن طويل' };
 function playOnce(id) {
   if (id && id.startsWith('c:')) {
     const s = SND.find(x => x.id === id);
@@ -636,18 +638,51 @@ function showToast(o) {
   $('#toasts').append(el); if (o.ttl) setTimeout(() => el.remove(), o.ttl); return el;
 }
 const say = (t, kind = 'ok') => showToast({ title: t, kind, ttl: 2600 });
-function notify(title, body, tag) { try { if ('Notification' in window && Notification.permission === 'granted') new Notification(title, { body, tag, dir: 'rtl', lang: 'ar' }); } catch (e) { } }
+async function notify(a) {
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const o = { body: a.body || '', tag: a.id, dir: 'rtl', lang: 'ar', vibrate: [300, 150, 300, 150, 300], requireInteraction: !!a.taskId, renotify: true, data: { taskId: a.taskId || null } };
+    const reg = navigator.serviceWorker && await navigator.serviceWorker.getRegistration();
+    if (reg && reg.showNotification) reg.showNotification(a.title, o); else new Notification(a.title, o);
+  } catch (e) { }
+}
 const SNZ = [];
+const AR_D = '٠١٢٣٤٥٦٧٨٩';
+function waNum(p) {
+  let d = (p || '').replace(/[٠-٩]/g, c => AR_D.indexOf(c)).replace(/\D/g, '');
+  if (d.startsWith('00')) d = d.slice(2); else if (d.startsWith('05') && d.length === 10) d = '966' + d.slice(1); else if (d.startsWith('5') && d.length === 9) d = '966' + d; else if (d.startsWith('0') && d.length >= 9) d = '966' + d.slice(1);
+  return d.length >= 9 ? d : '';
+}
+const openWA = (p, text) => { const w = waNum(p); if (w) window.open('https://wa.me/' + w + (text ? '?text=' + encodeURIComponent(text) : ''), '_blank'); };
+const openTel = p => { const w = waNum(p); if (w) location.href = 'tel:+' + w; };
+function findContact(name) {
+  const n = normAr(name || ''); if (!n) return null;
+  const pool = [...(ST.contacts || []), ...ST.family.map(f => ({ name: f.name, phone: f.phone })), ...ST.suppliers.map(f => ({ name: f.name, phone: /\d{7,}/.test(f.contact || '') ? f.contact : '' }))];
+  return pool.find(c => normAr(c.name) === n) || pool.find(c => normAr(c.name).split(' ')[0] === n.split(' ')[0] && n.length > 2) || null;
+}
+function upsertContact(name, phone) {
+  if (!name || !phone) return; ST.contacts = ST.contacts || [];
+  const c = ST.contacts.find(x => normAr(x.name) === normAr(name)); if (c) c.phone = phone; else ST.contacts.push({ id: uid(), name, phone });
+}
+const CT_RE = /(?:تواصل|اتواصل|اتصل|كلم|كلّم|راسل|ارسل)\s+(?:مع\s+|على\s+|بـ\s*|ب\s+|ل\s+|لـ\s*)?(\S.*)/;
+function linkContact(p) {
+  const m = (p.title || '').match(CT_RE); if (!m) return p;
+  const w = m[1].trim().split(/\s+/), c = findContact(w.slice(0, 2).join(' ')) || findContact(w[0]);
+  if (c) { p.contact = c.name; p.phone = c.phone || ''; } else p.contact = w[0];
+  return p;
+}
+const mkTask = p => { linkContact(p); return { id: uid(), title: p.title, date: p.date, time: p.time, cat: p.cat, repeat: p.repeat, remind: 0, done: false, contact: p.contact || '', phone: p.phone || '' }; };
 function fire(a) {
   const acts = [];
   if (a.taskId) {
+    if (a.phone && waNum(a.phone)) { acts.push({ label: 'واتساب', fn: () => { stopRing(); openWA(a.phone); } }); acts.push({ label: 'اتصال', fn: () => { stopRing(); openTel(a.phone); } }); }
     acts.push({ label: 'تم', fn: () => { stopRing(); toggleTask(a.taskId, true); } });
     acts.push({ label: 'بعد ١٠ د', fn: () => { stopRing(); SNZ.push({ ...a, at: Date.now() + 600000, id: a.id + '|z' + Date.now() }); } });
   }
-  startRing(a.sound, a.loop ? 3 : 1);
-  try { navigator.vibrate && navigator.vibrate([300, 150, 300]); } catch (e) { }
+  startRing(a.sound, a.taskId ? 5 : (a.loop ? 3 : 1));
+  try { navigator.vibrate && navigator.vibrate([400, 150, 400, 150, 400]); } catch (e) { }
   showToast({ title: a.title, body: a.body, actions: acts });
-  notify(a.title, a.body || '', a.id);
+  notify(a);
 }
 function alertsFor(k) {
   const c = cfg(), D = dayFor(k), P = D.prayers, out = [];
@@ -659,7 +694,7 @@ function alertsFor(k) {
   }
   for (const t of ST.tasks) {
     if (t.done || t.date !== k || !t.time || t.remind == null || t.remind < 0) continue;
-    out.push({ id: `${k}|t|${t.id}|${t.time}`, at: absMs(k, toMin(t.time), c.tz) - t.remind * 60000, title: t.title, body: 'تذكير بمهمة · ' + fmt12(toMin(t.time)), sound: t.sound || c.sounds.task, taskId: t.id, loop: true });
+    out.push({ id: `${k}|t|${t.id}|${t.time}`, at: absMs(k, toMin(t.time), c.tz) - t.remind * 60000, title: t.title, body: 'تذكير بمهمة · ' + fmt12(toMin(t.time)), sound: t.sound || c.sounds.task, taskId: t.id, phone: t.phone || '', win: 1800000, loop: true });
   }
   for (const b of D.blocks) if (b.alert && c.alerts[b.alert]) out.push({ id: `${k}|b|${b.key}`, at: absMs(k, b.t, c.tz), title: b.title, body: fmt12(b.t), sound: b.key === 'wake' ? c.sounds.wake : c.sounds.block });
   return out;
@@ -668,7 +703,7 @@ function tick() {
   const k = TODAY(), nowMs = Date.now();
   for (const a of alertsFor(k)) {
     if (FIRED[a.id]) continue;
-    if (nowMs >= a.at && nowMs < a.at + 120000) { FIRED[a.id] = 1; wr(LSFIRED, FIRED); fire(a); }
+    if (nowMs >= a.at && nowMs < a.at + (a.win || 120000)) { FIRED[a.id] = 1; wr(LSFIRED, FIRED); fire(a); }
   }
   for (let i = SNZ.length - 1; i >= 0; i--) if (nowMs >= SNZ[i].at) { const a = SNZ.splice(i, 1)[0]; fire(a); }
 }
@@ -862,7 +897,7 @@ function taskRow(t, today) {
   if (t.time) meta.push(fmt12(toMin(t.time)));
   if (t.repeat && t.repeat !== 'none') meta.push(t.repeat === 'daily' ? 'يومياً' : 'أسبوعياً');
   if (t.time && t.remind != null && t.remind >= 0) meta.push(ic('bell').replace('class="i ', 'style="width:14px;height:14px" class="i '));
-  return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div></div>`;
+  return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div>${t.contact || t.phone ? `<button class="btn sm ghost" data-act="tact" data-id="${t.id}" aria-label="تواصل">${ic('phone')}</button>` : ''}</div>`;
 }
 
 const TYPES = [['install', 'تركيبات'], ['visit', 'زيارة عميل'], ['free', 'صباح فاضي'], ['off', 'إجازة']];
@@ -877,6 +912,33 @@ function planCard(k, n) {
   return sec(`ترتيب الغد · ${DAYN[tw]}`, 'day', `<div class="small muted" style="margin-bottom:8px">${typeLabel(tm)}</div>${segBtns(fr ? FRI_TYPES : TYPES, tt, 'tmtype')}${fr && off ? `<div style="height:8px"></div>${segBtns(FMODES, friModeFor(tm), 'tmmode')}` : ''}<div class="small muted" style="margin-top:8px">${bits.join(' · ')}</div><div class="row wrap" style="margin-top:10px"><button class="btn sm" data-act="tmtasks">${ic('plus')} أضف مهام التجهيز</button>${fr && off ? `<button class="btn sm ghost" data-act="tripask">${ic('ai')} أفكار أماكن</button><button class="btn sm ghost" data-act="tripmsg">${ic('copy')} رسالة دعوة</button>` : ''}</div>`);
 }
 
+const hasPicker = () => !!(navigator.contacts && navigator.contacts.select);
+const alarmLink = t => { const [h, m] = (t.time || '00:00').split(':').map(Number); return `intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR=${h};i.android.intent.extra.alarm.MINUTES=${m};S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent(t.title)};end`; };
+function notifCard() {
+  if (!('Notification' in window)) return ''; const p = Notification.permission; if (p === 'granted') return '';
+  return sec('فعّل الإشعارات والصوت', 'bell', p === 'denied' ? '<div class="small">الإشعارات محظورة. افتح إعدادات الموقع أو التطبيق في المتصفح وفعّل «الإشعارات» ثم أعد فتح التطبيق.</div>' : '<div class="small muted" style="margin-bottom:8px">اسمح بالإشعارات حتى تصلك تنبيهات المهام والصلوات بالصوت.</div><button class="btn block" data-act="enotif">تفعيل الآن</button>');
+}
+function openTaskAct(id) {
+  const t = ST.tasks.find(x => x.id === id); if (!t) return; const w = waNum(t.phone);
+  openSheet(`<h2 class="h2">${esc(t.title)}</h2><div class="small muted">${esc(t.contact || '')}${t.phone ? ' · ' + esc(t.phone) : (t.contact ? ' · لا يوجد رقم، أضفه من «تعديل»' : '')}</div>
+  <div class="row wrap" style="margin-top:12px">${w ? `<button class="btn grow" data-act="twa" data-id="${id}">واتساب</button><button class="btn grow ghost" data-act="tcall" data-id="${id}">اتصال</button>` : ''}</div>
+  <div class="row wrap" style="margin-top:8px"><button class="btn ghost grow" data-act="tdone2" data-id="${id}">تم</button><button class="btn ghost grow" data-act="tedit" data-id="${id}">تعديل</button></div>`);
+}
+const FMSG = {
+  jum: ['جمعة مباركة', 'السلام عليكم ورحمة الله وبركاته\nجمعة مباركة عليكم وعلى الأهل جميعاً، تقبّل الله منا ومنكم صالح الأعمال، ولا تنسونا من دعائكم 🤲'],
+  eve: ['مساء الخير', 'مساء الخير والنور، كيف حالكم وأحوال الأهل؟ نسأل الله لكم العافية والسلامة، ونحن بخير والحمد لله. نتشرف بسماع أخباركم.'],
+  morn: ['صباح الخير', 'صباح الخير، أسأل الله أن يكون صباحكم خيراً وبركة، وأن تكونوا جميعاً بصحة وعافية. اشتقنا لكم.'],
+  check: ['اطمئنان', 'السلام عليكم ورحمة الله، اطمأننت عليكم وعلى الأهل والأولاد، أخبروني إن احتجتم شيئاً، والله يحفظكم ويرعاكم.'],
+  cong: ['تهنئة', 'ألف مبروك، بارك الله لكم وبارك عليكم وجمع بينكم في خير، وأسعد الله أيامكم.']
+};
+function openFamMsg(id, kind) {
+  const day = weekday(TODAY()), k = kind || (day === 4 || day === 5 ? 'jum' : 'eve'), rec = id ? ST.family.filter(x => x.id === id) : ST.family;
+  openSheet(`<h2 class="h2">رسالة للأهل والأصدقاء</h2>
+  <div class="chips">${Object.entries(FMSG).map(([v, [l]]) => `<button class="chip ${k === v ? 'on' : ''}" data-act="fmkind" data-v="${v}" data-id="${id || ''}">${l}</button>`).join('')}</div>
+  <textarea id="msgtxt" style="min-height:120px">${esc(FMSG[k][1])}</textarea>
+  <div class="row wrap"><button class="btn ghost" data-act="copymsg">${ic('copy')} نسخ</button><button class="btn ghost" data-act="fmai" data-v="${k}" ${aiReady() ? '' : 'disabled'}>${ic('ai')} صياغة جديدة بالذكاء</button></div>
+  <div class="gap" style="margin-top:10px">${rec.length ? rec.map(f => `<div class="card"><div class="row"><div class="grow"><b>${esc(f.name)}</b> <span class="small muted">${esc(f.rel || '')}</span></div>${waNum(f.phone) ? `<button class="btn sm" data-act="fmsend" data-id="${f.id}">واتساب</button>` : '<span class="small muted">لا رقم · أضفه من التعديل</span>'}</div></div>`).join('') : '<div class="small muted">أضف أقرباء أو أصدقاء أولاً من تبويب التواصل.</div>'}</div>`);
+}
 /* ---- اليوم ---- */
 function vToday() {
   const n = NOW(), k = dateKey(n), c = cfg(), dt = dayTypeFor(k), D = dayFor(k), P = D.prayers, keys = Object.keys(PRAYER_NAMES);
@@ -892,7 +954,7 @@ function vToday() {
   const todayTasks = ST.tasks.filter(t => !t.done && t.date && t.date <= k).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
   const tripCard = planCard(k, n);
   const df = dueFamily(), ds = dueSup();
-  const due = [...df.map(f => `<div class="task"><span class="dot" style="--cc:var(--c-family)"></span><div class="grow"><div class="tt">اتصل بـ ${esc(f.name)}</div><div class="meta">${f.last ? 'آخر تواصل ' + relDate(f.last, k) : 'لم تتواصل بعد'}</div></div><button class="btn sm" data-act="famdone" data-id="${f.id}">تم</button></div>`),
+  const due = [...df.map(f => `<div class="task"><span class="dot" style="--cc:var(--c-family)"></span><div class="grow"><div class="tt">اتصل بـ ${esc(f.name)}</div><div class="meta">${f.last ? 'آخر تواصل ' + relDate(f.last, k) : 'لم تتواصل بعد'}</div></div><button class="btn sm ghost" data-act="fammsg" data-id="${f.id}">رسالة</button><button class="btn sm" data-act="famdone" data-id="${f.id}">تم</button></div>`),
     ...ds.map(s => `<div class="task"><span class="dot" style="--cc:var(--c-work)"></span><div class="grow"><div class="tt">متابعة ${esc(s.name)}</div><div class="meta">${esc(s.status)}${s.product ? ' · ' + esc(s.product) : ''}</div></div><button class="btn sm" data-act="supopen" data-id="${s.id}">فتح</button></div>`)];
   const sk = SKILLS[dayOfYear(k) % SKILLS.length], learned = !!ST.skillLog[k];
   return `
@@ -903,6 +965,7 @@ function vToday() {
     <div class="grow"><b style="font-family:var(--f-display);font-size:17px">${greet(n)}</b><div class="small muted">أنجزت ${dc} من ${cnt.length} من برنامج اليوم · ${D.season === 'summer' ? 'جدول الصيف' : 'جدول الشتاء'}</div></div></section>
   ${segBtns(weekday(k) === 5 ? FRI_TYPES : TYPES, dt, 'daytype')}
   ${weekday(k) === 5 && dt === 'off' ? segBtns(FMODES, friModeFor(k), 'fmode') : ''}
+  ${notifCard()}
   ${tripCard}
   <section class="card"><h2>${ic('day')}<span>برنامج اليوم</span></h2><div class="tl">${rows}</div><div class="note" style="margin-top:8px">أوقات الصلوات محسوبة (أم القرى) وتتحرك معها بقية الفقرات. عدّل الأوقات الثابتة من الإعدادات.</div></section>
   ${sec('مهام اليوم', 'tasks', todayTasks.length ? `<div class="gap">${todayTasks.map(t => taskRow(t, k)).join('')}</div>` : empty('tasks', 'لا توجد مهام لليوم', 'اضغط «المهام» وأضف بالكتابة أو الصوت'), `<button class="btn sm ghost" data-act="goto" data-v="tasks">إضافة</button>`)}
@@ -938,7 +1001,10 @@ function openTask(id) {
   ${fld('التذكير', `<select id="tk-rem">${[[-1, 'بدون'], [0, 'عند الوقت'], [5, 'قبل ٥ دقائق'], [10, 'قبل ١٠ دقائق'], [30, 'قبل ٣٠ دقيقة'], [60, 'قبل ساعة']].map(([v, l]) => `<option value="${v}" ${(t.remind ?? 0) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}</div>
   <div class="grid2">${fld('التكرار', `<select id="tk-rep">${[['none', 'بدون'], ['daily', 'يومياً'], ['weekly', 'أسبوعياً']].map(([v, l]) => `<option value="${v}" ${(t.repeat || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
   ${fld('صوت التنبيه', `<select id="tk-snd"><option value="">الافتراضي</option>${soundOptions(t.sound)}</select>`)}</div>
+  <div class="grid2">${fld('التواصل مع (اسم)', `<input id="tk-con" type="text" value="${esc(t.contact || '')}">`)}${fld('الرقم (واتساب/اتصال)', `<input id="tk-ph" type="tel" inputmode="tel" value="${esc(t.phone || '')}" placeholder="05xxxxxxxx">`)}</div>
+  ${hasPicker() ? `<button class="btn ghost block" data-act="pickcon" data-n="tk-con" data-p="tk-ph">${ic('phone')} اختيار من جهات الاتصال</button>` : ''}
   ${fld('ملاحظات', `<textarea id="tk-note">${esc(t.notes || '')}</textarea>`)}
+  ${id && t.time ? `<a class="btn ghost block" style="text-decoration:none" href="${alarmLink(t)}">${ic('bell')} ضبط منبّه في ساعة الجوال (أندرويد)</a>` : ''}
   <div class="row"><button class="btn grow" data-act="tsave" data-id="${id || ''}">حفظ</button>${id ? `<button class="btn danger" data-act="tdel" data-id="${id}">${ic('trash')} حذف</button>` : ''}</div>`);
 }
 
@@ -1009,6 +1075,7 @@ function vGrow() {
   }
   const L = ST.family;
   return seg + `<button class="btn block" data-act="famopen" data-id="">${ic('plus')} إضافة قريب أو صديق</button>
+  <button class="btn ghost block" data-act="fammsg" data-id="">${ic('copy')} رسالة جمعة أو تحية للجميع</button>
   <div class="gap">${L.length ? L.map(f => { const due = !f.last || diffDays(f.last, k) >= f.freq; return `<div class="card"><div class="row"><div class="grow click" data-act="famopen" data-id="${f.id}"><b>${esc(f.name)}</b> <span class="small muted">${esc(f.rel || '')}</span><div class="small muted">${FREQ.find(x => x[0] === f.freq)?.[1] || ''} · ${f.last ? 'آخر تواصل ' + relDate(f.last, k) : 'لم تتواصل بعد'}</div></div>${due ? '<span class="badge warn">مستحق</span>' : ''}<button class="btn sm" data-act="famdone" data-id="${f.id}">${ic('phone')} تم</button></div></div>`; }).join('') : `<div class="card">${empty('users', 'أضف أهلك الذين تريد البقاء على تواصل معهم', 'سيذكّرك التطبيق حسب التكرار الذي تختاره')}<div class="chips" style="justify-content:center">${['الوالدة', 'الوالد', 'الإخوة', 'الأصدقاء'].map(n => `<button class="chip" data-act="famquick" data-v="${n}">${n}</button>`).join('')}</div></div>`}</div>`;
 }
 function supMsg(s) {
@@ -1031,6 +1098,7 @@ function openFam(id, preset) {
   const f = id ? ST.family.find(x => x.id === id) : { name: preset || '', rel: '', freq: 7, last: null, phone: '' };
   openSheet(`<h2 class="h2">${id ? 'تعديل' : 'إضافة للتواصل'}</h2>
   ${fld('الاسم', `<input id="fm-name" type="text" value="${esc(f.name)}">`)}${fld('صلة القرابة', `<input id="fm-rel" type="text" value="${esc(f.rel || '')}" placeholder="اختياري">`)}
+  ${fld('الرقم (واتساب/اتصال)', `<input id="fm-ph" type="tel" inputmode="tel" value="${esc(f.phone || '')}" placeholder="05xxxxxxxx أو بصيغة دولية">`)}${hasPicker() ? `<button class="btn ghost block" data-act="pickcon" data-n="fm-name" data-p="fm-ph">${ic('phone')} اختيار من جهات الاتصال</button>` : ''}
   ${fld('كم مرة تتواصل؟', `<select id="fm-freq">${FREQ.map(([v, l]) => `<option value="${v}" ${f.freq === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
   <div class="row"><button class="btn grow" data-act="famsave" data-id="${id || ''}">حفظ</button>${id ? `<button class="btn danger" data-act="famdel" data-id="${id}">${ic('trash')} حذف</button>` : ''}</div>`);
 }
@@ -1053,7 +1121,7 @@ function localChat(text) {
   const t = normAr(text), n = NOW(), k = dateKey(n), c = cfg();
   if (/^(ضيف|اضف|أضف|ذكرني|سجل|سجّل|ضيفلي)/.test(t)) {
     const p = parseTask(text, n, kk => prayersFor(kk, c));
-    ST.tasks.push({ id: uid(), title: p.title, date: p.date, time: p.time, cat: p.cat, repeat: p.repeat, remind: 0, done: false }); save();
+    ST.tasks.push(mkTask(p)); save();
     return `أضفت المهمة: «${p.title}»${p.date ? ' · ' + relDate(p.date, k) : ''}${p.time ? ' · ' + fmt12(toMin(p.time)) : ''}${p.repeat !== 'none' ? ' · متكررة' : ''}.`;
   }
   if (/(رتب|ترتيب|خطة|خطه|جدول|نظم)/.test(t) && /(اسبوع|أسبوع)/.test(t)) {
@@ -1132,6 +1200,7 @@ function vSettings() {
   <section class="card gap"><h2>${ic('day')}<span>أيام التركيبات وخرجات الجمعة</span></h2>
     <div class="grid2">${fld('انتهاء التركيبات (تقريباً)', inp('settings.installEnd', 'time'))}${fld('الانطلاق من المعرض للبيت', inp('settings.showroomLeave', 'time'))}</div>
     <div class="grid2">${fld('بداية زيارة العميل', inp('settings.visitStart', 'time'))}${fld('نهاية الزيارة (١٢:٠٠ أو ١١:٣٠)', inp('settings.visitEnd', 'time'))}</div>
+    ${fld('التواصل مع الأهل والأصدقاء (بعد العشاء، ويضاف ليلة الجمعة والجمعة دائماً)', selb('settings.familyEvery', [[1, 'كل يوم'], [2, 'كل يومين'], [3, 'كل ٣ أيام']], true))}
     ${fld('مدة الطريق من المعرض (دقيقة)', inp('settings.homeDrive', 'number'))}
     ${tog('settings.pickOnInstall', 'إحضار الولد من المدرسة في أيام التركيبات')}
     ${fld('نوع جمعة الإجازة الافتراضي', selb('settings.friOffDefault', FMODES))}
@@ -1141,6 +1210,7 @@ function vSettings() {
     ${tog('settings.alerts.wake', 'الاستيقاظ')}${tog('settings.alerts.pick', 'توصيل واستلام الولد')}${tog('settings.alerts.work', 'الذهاب للدوام')}${tog('settings.alerts.wird', 'ورد القرآن')}
     <div class="sline"><span class="grow">صوت المهام</span><select style="width:150px" data-bind="settings.sounds.task">${soundOptions(c.sounds.task)}</select></div>
     <div class="sline"><span class="grow">صوت فقرات البرنامج</span><select style="width:150px" data-bind="settings.sounds.block">${soundOptions(c.sounds.block)}</select></div>
+    <div class="row wrap"><button class="btn sm ghost" data-act="testalert">جرّب صوت المهام</button><button class="btn sm ghost" data-act="testblock">جرّب صوت الفقرات</button>${'Notification' in window && Notification.permission !== 'granted' ? '<button class="btn sm" data-act="enotif">تفعيل الإشعارات</button>' : ''}</div>
     <div class="sline"><span class="grow">صوت الاستيقاظ</span><select style="width:150px" data-bind="settings.sounds.wake">${soundOptions(c.sounds.wake)}</select></div>
     <div class="row wrap" style="margin-top:8px"><button class="btn ghost" data-act="testalert">${ic('play')} تجربة تنبيه</button></div></section>
   <section class="card gap"><h2>${ic('ai')}<span>الذكاء الاصطناعي</span></h2>
@@ -1173,7 +1243,7 @@ function go(t) { tab = t; closeSheet(); render(); $('#main').scrollTop = 0; }
 
 /* ---- الأحداث ---- */
 const ACT = {
-  goto: el => { const v = el.dataset.v, M = { growth: ['grow', 'skills'], suppliers: ['grow', 'sup'], family: ['grow', 'fam'] }; if (M[v]) { tab = M[v][0]; growT = M[v][1]; closeSheet(); render(); $('#main').scrollTop = 0; } else go(v); },
+  goto: el => { if (el.dataset.v === 'famsg') { openFamMsg('', 'jum'); return; } const v = el.dataset.v, M = { growth: ['grow', 'skills'], suppliers: ['grow', 'sup'], family: ['grow', 'fam'] }; if (M[v]) { tab = M[v][0]; growT = M[v][1]; closeSheet(); render(); $('#main').scrollTop = 0; } else go(v); },
   fmode: el => { ST.dayOpt[TODAY()] = el.dataset.v; save(); render(); },
   tmtype: el => { ST.dayType[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
   tmmode: el => { ST.dayOpt[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
@@ -1182,6 +1252,7 @@ const ACT = {
     const mk = (title, date, time, cat) => { const tag = 'tm|' + date + '|' + title; if (!ST.tasks.some(x => x.tag === tag)) { ST.tasks.push({ id: uid(), tag, title, date, time, cat, repeat: 'none', remind: time ? 15 : -1, done: false }); done.push(title); } };
     if (fr && tt === 'off') {
       mk('تأكيد المكان والموعد مع الأهل والأصدقاء', k, now < 1200 ? '20:00' : null, 'family');
+      if (weekday(k) === 4) mk('إرسال رسالة جمعة مباركة للأهل والأصدقاء', k, now < 1230 ? '20:30' : null, 'family');
       if (mode === 'am') mk('تجهيز الغداء وتحميل الأغراض للخرجة', tm, c.friPrep || '08:30', 'family');
       if (mode === 'pm') mk('تجهيز الأغراض للخرجة بعد الغداء', tm, '13:30', 'family');
     } else if (fr) mk('تجهيز ما أحتاجه للمعرض بعد الجمعة', tm, null, 'work');
@@ -1189,6 +1260,17 @@ const ACT = {
     else if (tt === 'visit') mk('تجهيز أدوات القياس وتأكيد موعد زيارة العميل', k, null, 'work');
     save(); render(); say(done.length ? `أُضيفت ${done.length} مهام` : 'لا مهام جديدة لإضافتها');
   },
+  enotif: async () => { actx(); playOnce('soft'); try { if ('Notification' in window) { const r = await Notification.requestPermission(); say(r === 'granted' ? 'تم تفعيل الإشعارات' : 'لم يُسمح بالإشعارات، فعّلها من إعدادات المتصفح', r === 'granted' ? 'ok' : 'warn'); } } catch (e) { } render(); },
+  testblock: () => fire({ id: 'tb' + Date.now(), title: 'تنبيه فقرة من البرنامج', body: 'هذا صوت الفقرات الروتينية', sound: cfg().sounds.block, loop: false }),
+  pickcon: async el => { try { const r = await navigator.contacts.select(['name', 'tel'], { multiple: false }); if (r && r[0]) { const n = $('#' + el.dataset.n), p = $('#' + el.dataset.p); if (n && !n.value) n.value = (r[0].name || [])[0] || ''; if (p) p.value = (r[0].tel || [])[0] || ''; } } catch (e) { say('اختيار جهات الاتصال غير مدعوم هنا، اكتب الرقم يدوياً', 'warn'); } },
+  tact: el => openTaskAct(el.dataset.id),
+  twa: el => { const t = ST.tasks.find(x => x.id === el.dataset.id); if (t) openWA(t.phone); },
+  tcall: el => { const t = ST.tasks.find(x => x.id === el.dataset.id); if (t) openTel(t.phone); },
+  tdone2: el => { toggleTask(el.dataset.id, true); closeSheet(); render(); },
+  fammsg: el => openFamMsg(el.dataset.id || '', null),
+  fmkind: el => openFamMsg(el.dataset.id || '', el.dataset.v),
+  fmsend: el => { const f = ST.family.find(x => x.id === el.dataset.id); if (!f) return; openWA(f.phone, $('#msgtxt').value); f.last = TODAY(); save(); say('سُجّل التواصل مع ' + f.name); },
+  fmai: async el => { const ta = $('#msgtxt'); el.disabled = true; try { ta.value = (await askAI([{ role: 'user', content: 'النوع: ' + FMSG[el.dataset.v][0] + '\nنص سابق للإلهام: ' + ta.value }], 'اكتب رسالة واتساب قصيرة ودافئة بالعربية لأهل وأصدقاء، من ٢ إلى ٣ أسطر، بلا مبالغة. أعد الرسالة فقط دون شرح.', { quick: true, max: 300 })).trim(); } catch (e) { say(errMsg(e), 'warn'); } el.disabled = false; },
   tripask: () => { go('ai'); sendChat('اقترح لي ٥ أفكار لرحلة عائلية بعد العصر يوم الجمعة مع الأهل والأصدقاء قرب ' + cityName() + '، مع نصائح تجهيز سريعة.'); },
   tripmsg: async () => { const t = 'السلام عليكم ورحمة الله، نقترح لقاءً ورحلة بسيطة يوم الجمعة بعد العصر إن شاء الله. ما رأيكم بالمكان والموعد؟'; try { await navigator.clipboard.writeText(t); say('تم نسخ رسالة الدعوة'); } catch (e) { showToast({ title: 'انسخ الرسالة', body: t, ttl: 12000 }); } }, gosettings: () => go(tab === 'settings' ? 'today' : 'settings'),
   blk: el => toggleBlock(el.dataset.k, el.dataset.v),
@@ -1198,12 +1280,14 @@ const ACT = {
   qadd: () => {
     const i = $('#qa'), txt = i.value.trim(); if (!txt) return;
     const p = parseTask(txt, NOW(), k => prayersFor(k, cfg()));
-    ST.tasks.push({ id: uid(), title: p.title, date: p.date, time: p.time, cat: p.cat, repeat: p.repeat, remind: 0, done: false });
+    ST.tasks.push(mkTask(p));
     taskF = p.date ? (p.date <= TODAY() ? 'today' : 'up') : 'none'; save(); render();
     say(`أُضيفت: ${p.title}${p.date ? ' · ' + relDate(p.date, TODAY()) : ''}${p.time ? ' · ' + fmt12(toMin(p.time)) : ''}`);
   },
   tsave: el => {
-    const id = el.dataset.id, o = { title: $('#tk-title').value.trim(), date: $('#tk-date').value || null, time: $('#tk-time').value || null, cat: $('#tk-cat').value, remind: +$('#tk-rem').value, repeat: $('#tk-rep').value, sound: $('#tk-snd').value || null, notes: $('#tk-note').value };
+    const id = el.dataset.id, o = { title: $('#tk-title').value.trim(), date: $('#tk-date').value || null, time: $('#tk-time').value || null, cat: $('#tk-cat').value, remind: +$('#tk-rem').value, repeat: $('#tk-rep').value, sound: $('#tk-snd').value || null, notes: $('#tk-note').value, contact: $('#tk-con').value.trim(), phone: $('#tk-ph').value.trim() };
+    if (o.contact && !o.phone) { const f = findContact(o.contact); if (f && f.phone) o.phone = f.phone; }
+    upsertContact(o.contact, o.phone);
     if (!o.title) return say('اكتب عنوان المهمة', 'warn');
     if (id) Object.assign(ST.tasks.find(x => x.id === id), o); else ST.tasks.push({ id: uid(), done: false, ...o });
     save(); closeSheet(); render();
@@ -1254,7 +1338,7 @@ const ACT = {
   },
   famopen: el => openFam(el.dataset.id || null), famquick: el => openFam(null, el.dataset.v),
   famsave: el => {
-    const id = el.dataset.id, o = { name: $('#fm-name').value.trim(), rel: $('#fm-rel').value.trim(), freq: +$('#fm-freq').value };
+    const id = el.dataset.id, o = { name: $('#fm-name').value.trim(), rel: $('#fm-rel').value.trim(), phone: $('#fm-ph').value.trim(), freq: +$('#fm-freq').value };
     if (!o.name) return say('اكتب الاسم', 'warn');
     if (id) Object.assign(ST.family.find(x => x.id === id), o); else ST.family.push({ id: uid(), last: null, ...o });
     save(); closeSheet(); render();
@@ -1265,7 +1349,7 @@ const ACT = {
   chatclr: () => { ST.chat = []; save(); render(); },
   addsug: el => {
     const m = ST.chat[+el.dataset.i]; if (!m || !m.tasks) return; const today = TODAY();
-    for (const t of m.tasks) ST.tasks.push({ id: uid(), title: String(t.title), date: /^\d{4}-\d{2}-\d{2}$/.test(t.date || '') ? t.date : null, time: /^\d{2}:\d{2}$/.test(t.time || '') ? t.time : null, cat: CATN[t.cat] ? t.cat : 'general', repeat: 'none', remind: 0, done: false });
+    for (const t of m.tasks) ST.tasks.push({ ...linkContact({ title: String(t.title) }), id: uid(), title: String(t.title), date: /^\d{4}-\d{2}-\d{2}$/.test(t.date || '') ? t.date : null, time: /^\d{2}:\d{2}$/.test(t.time || '') ? t.time : null, cat: CATN[t.cat] ? t.cat : 'general', repeat: 'none', remind: 0, done: false });
     m.tasks = []; save(); render(); say('أُضيفت المهام إلى قائمتك');
   },
   sday: el => { const d = +el.dataset.v, a = cfg().schoolDays; cfg().schoolDays = a.includes(d) ? a.filter(x => x !== d) : [...a, d].sort(); save(); render(); },
@@ -1303,6 +1387,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { ti
 
 /* ---- الإقلاع ---- */
 applyTheme(); pruneFired(); render(); initCaps(); tick();
+try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', e => { const id = e.data && e.data.taskId; if (id) openTaskAct(id); }); const m = /#t=([\w-]+)/.exec(location.hash); if (m) { openTaskAct(m[1]); history.replaceState(null, '', location.pathname); } } catch (e) { }
 setInterval(tick, 5000);
 setInterval(() => { updCd(); const n = NOW(); if (n.min !== lastMin) { lastMin = n.min; const a = document.activeElement; if ((tab === 'today' || tab === 'prayer') && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) && !$('.scrim')) render(); } }, 1000);
 </script>
