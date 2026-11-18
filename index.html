@@ -300,6 +300,7 @@ const DEFAULT_SETTINGS = {
   pick: { summer: '12:15', winter: '12:45' },
   driveMin: 15,
   lunch: '14:30', leave: '15:00', workStart: '16:00', workEnd: '22:00', sleep: '22:45',
+  installEnd: '16:00', visitStart: '09:00', visitEnd: '12:00', showroomLeave: '20:00', homeDrive: 15, pickOnInstall: false, friOffDefault: 'pm', friTripTime: '15:00', friOut: '09:30', friPrep: '08:30',
   alerts: { prayer: true, wake: true, pick: true, work: true, wird: true, pre: 10 },
   sounds: { fajr: 'bell', dhuhr: 'bell', asr: 'bell', maghrib: 'bell', isha: 'bell', task: 'chime', block: 'soft' }
 };
@@ -312,67 +313,73 @@ function prayersFor(k, S) {
   return calcPrayers(y, m, d, S.lat, S.lng, S.tz, { ishaMin: isRamadan(k) ? 120 : 90 });
 }
 
-/* dayType: 'install' = تركيبات | 'free' = صباح فاضي | 'off' = إجازة */
-function buildDay(k, S, dayType) {
-  const P = prayersFor(k, S), se = seasonOf(k, S), wd = weekday(k);
-  const school = S.schoolDays.includes(wd) && dayType !== 'off';
+const SHOPDEV = ['ابحث عن مصنع أو وكيل جديد لخامات الديكور (بانوهات، جبس، باركيه)', 'اطلب كتالوجاً وقائمة أسعار من مورّد جديد', 'راسل وكالة أو موزّعاً معتمداً لعلامة تجارية في الديكور', 'قارن أسعار موردك الحالي بمورّد آخر وسجّل الفرق', 'خطّط لإضافة منتج جديد للمعرض (إضاءة، ستائر، ورق جدران)', 'فكّر بتطوير واجهة المعرض أو ترتيب العرض الداخلي', 'اسأل مصنعاً عن العينات والحد الأدنى للطلب', 'تابع من أرسلت لهم طلب كتالوج ولم يردّوا', 'ابحث عن معرض أو فعالية ديكور لمتابعتها أو زيارتها', 'سجّل فكرة خامة أو تشطيب جديد تقدّمه للعملاء', 'فاوض مورّد الخامة الأكثر طلباً على سعر أفضل', 'راجع أكثر ثلاثة منتجات مبيعاً وفكّر بتوسيع خطها'];
+
+/* أنواع اليوم: install = تركيبات | visit = زيارة عميل/مقاسات | free = صباح فاضي | off = إجازة
+   opt.fri (جمعة الإجازة): pm = خرجة بعد الغداء | am = خرجة صباحية | home = في البيت */
+function buildDay(k, S, dayType, opt = {}) {
+  const P = prayersFor(k, S), se = seasonOf(k, S), wd = weekday(k), fri = wd === 5, idx = dayOfYear(k);
+  const off = dayType === 'off', install = dayType === 'install', visit = dayType === 'visit';
+  const mode = fri && off ? (opt.fri || 'pm') : null;
+  const school = S.schoolDays.includes(wd) && !off;
   const B = [];
   const add = (key, t, title, cat, extra = {}) => B.push({ key, t: Math.round(t), title, cat, ...extra });
-  const wake = toMin(S.wake[se]);
-  add('wake', wake, 'الاستيقاظ والوضوء', 'faith', { alert: 'wake' });
+  add('wake', toMin(S.wake[se]), 'الاستيقاظ والوضوء', 'faith', { alert: 'wake' });
   add('fajr', P.fajr, 'صلاة الفجر', 'prayer', { prayer: 'fajr' });
   add('adhkar', P.fajr + 12, 'أذكار الصباح', 'faith');
   add('wird', P.fajr + 25, 'ورد القرآن مع التفسير', 'faith', { alert: 'wird', link: 'wird' });
+  if (fri) add('kahf', P.fajr + 40, 'قراءة سورة الكهف (سنّة يوم الجمعة)', 'faith');
   add('sunrise', P.sunrise, 'الشروق', 'info', { info: true });
   add('duha', P.sunrise + 20, 'صلاة الضحى (نافلة)', 'prayer', { optional: true });
-  let free0 = P.sunrise + 45;
-  let dropEnd = null;
+  let free0 = P.sunrise + 45, dropEnd = null, pickAt = null;
   if (school) {
     const dr = toMin(S.drop[se]);
     add('drop', dr, 'توصيل الولد للمدرسة', 'family', { alert: 'pick', dur: S.driveMin });
-    dropEnd = dr + S.driveMin;
-    free0 = Math.max(free0, dropEnd + 5);
-    const pk = toMin(S.pick[se]);
-    add('pick', pk - 10, 'الذهاب لإحضار الولد من المدرسة', 'family', { alert: 'pick', dur: S.driveMin + 10 });
+    dropEnd = dr + S.driveMin; free0 = Math.max(free0, dropEnd + 5);
+    if (!install || S.pickOnInstall) { pickAt = toMin(S.pick[se]) - 10; add('pick', pickAt, 'الذهاب لإحضار الولد من المدرسة', 'family', { alert: 'pick', dur: S.driveMin + 10 }); }
   }
-  const pickAt = school ? toMin(S.pick[se]) - 10 : null;
-  const noonCut = pickAt ?? (P.dhuhr - 5);
-  if (dayType === 'install') {
-    add('install', dropEnd ?? free0, 'تركيبات الديكور (موقع العمل)', 'work', { dur: Math.max(30, noonCut - (dropEnd ?? free0)), span: true });
-  } else if (dayType === 'free') {
+  const instEnd = toMin(S.installEnd || '16:00'), out = toMin(S.friOut || '09:30');
+  if (install) add('install', dropEnd ?? free0, 'تركيبات الديكور (موقع العمل)', 'work', { span: true, dur: Math.max(30, instEnd - (dropEnd ?? free0)) });
+  else if (visit) { const vs = toMin(S.visitStart || '09:00'), ve = toMin(S.visitEnd || '12:00'); add('visit', vs, 'زيارة عميل أو أخذ مقاسات', 'work', { span: true, dur: Math.max(30, ve - vs) }); }
+  else if (mode === 'am') {
+    add('prep', toMin(S.friPrep || '08:30'), 'تجهيز الغداء وتحميل الأغراض', 'family', { dur: 60 });
+    add('trip', out, 'خرجة عائلية إلى منتزه أو حديقة', 'family', { span: true, dur: Math.max(60, P.asr + 40 - out) });
+  } else if (!off) {
     add('learn_am', free0, 'وقت التطوير: تعلّم وقراءة', 'growth', { dur: 60, link: 'growth' });
     add('suppliers_am', free0 + 70, 'تواصل مع المصانع والموردين', 'work', { dur: 40, link: 'suppliers' });
     add('home', free0 + 120, 'مهام البيت والإصلاحات', 'general', { dur: 60 });
   }
-  if (wd === 5) {
-    add('kahf', P.fajr + 40, 'قراءة سورة الكهف (سنّة يوم الجمعة)', 'faith');
-    add('jumua_prep', P.dhuhr - 60, 'الاغتسال والتطيّب والتبكير للجمعة', 'faith');
-  }
-  add('dhuhr', P.dhuhr, wd === 5 ? 'صلاة الجمعة' : 'صلاة الظهر', 'prayer', { prayer: 'dhuhr' });
-  if (dayType !== 'install' && !(wd === 5 && dayType === 'off')) add('nap', Math.max(P.dhuhr + 40, (pickAt ?? 0) + 40), 'قيلولة قصيرة (٢٠–٣٠ دقيقة)', 'general', { optional: true, dur: 25 });
-  if (dayType !== 'off') {
-    add('lunch', toMin(S.lunch), 'الغداء', 'general', { dur: 30 });
-    add('leave', toMin(S.leave), 'التجهّز للعصر والذهاب للدوام', 'work', { alert: 'work' });
-  } else if (wd === 5) {
-    add('shop', P.dhuhr + 50, 'التسوق بعد الصلاة', 'family', { dur: 90 });
-    add('lunch', Math.min(toMin(S.lunch), P.asr - 25), 'العودة للبيت والغداء', 'general', { dur: 30 });
-  } else {
-    add('lunch', toMin(S.lunch), 'الغداء', 'general', { dur: 30 });
-  }
+  if (fri && mode !== 'am') add('jumua_prep', P.dhuhr - 60, 'الاغتسال والتطيّب والتبكير للجمعة', 'faith');
+  add('dhuhr', P.dhuhr, fri ? (mode === 'am' ? 'صلاة الجمعة (في الطريق)' : 'صلاة الجمعة') : 'صلاة الظهر', 'prayer', { prayer: 'dhuhr' });
+  if (fri && mode !== 'am') add('market', P.dhuhr + 45, 'السوق بجانب المسجد وشراء الأغراض', 'family', { dur: 35 });
+  if (!install && !fri) add('nap', Math.max(P.dhuhr + 40, (pickAt ?? 0) + 40), 'قيلولة قصيرة (٢٠–٣٠ دقيقة)', 'general', { optional: true, dur: 25 });
+  const lunchT = fri ? (mode === 'am' ? P.dhuhr + 40 : Math.min(toMin(S.lunch), P.asr - 25)) : toMin(S.lunch);
+  add('lunch', lunchT, mode === 'am' ? 'الغداء في المنتزه' : (fri && off ? 'العودة للبيت والغداء' : 'الغداء'), 'general', { dur: 30 });
+  if (!off && !install) add('leave', toMin(S.leave), 'التجهّز للعصر والذهاب للدوام', 'work', { alert: 'work' });
   add('asr', P.asr, 'صلاة العصر', 'prayer', { prayer: 'asr' });
-  if (dayType !== 'off') {
+  const lv = toMin(S.showroomLeave || '20:00'), drive = S.homeDrive ?? 15, arrive = lv + drive;
+  if (install) {
+    add('showroom', instEnd, 'إكمال الوقت في المعرض (إن انتهت التركيبات)', 'work', { span: true, dur: Math.max(30, lv - instEnd) });
+    add('homeleave', lv, `الانطلاق من المعرض إلى البيت (الوصول ${fmt12(arrive)})`, 'work', { dur: drive });
+    add('dinner', arrive + 15, 'الاستحمام والعشاء والجلوس مع الأهل', 'family', { dur: 60 });
+    add('accounts', arrive + 80, 'حسابات تكتيك وإدخال بيانات الشغل (١٥ دقيقة)', 'work', { dur: 15 });
+    add('clients', arrive + 100, 'الرد على العملاء إن وُجدوا', 'work', { dur: 15 });
+  } else if (!off) {
     add('office', toMin(S.workStart), 'الدوام في معرض الديكور', 'work', { span: true, dur: toMin(S.workEnd) - toMin(S.workStart) });
     add('quotes', toMin(S.workStart) + 15, 'متابعة العملاء وعروض الأسعار', 'work', { dur: 45 });
-  } else {
-    if (wd === 5) add('trip', P.asr + 25, 'رحلة مع الأهل والأصدقاء (مرة كل أسبوعين)', 'family', { span: true, dur: Math.max(60, P.maghrib - (P.asr + 25)) });
-    else add('rest', P.asr + 30, 'وقت للعائلة والراحة', 'family', { dur: 90 });
-  }
+    if (!visit) add('family', toMin(S.workStart) + 65, 'التواصل مع الأهل والأصدقاء', 'family', { dur: 30, link: 'family' });
+  } else if (mode === 'pm') {
+    const ts = toMin(S.friTripTime || '15:00');
+    add('trip', ts, 'خرجة عائلية بعد الغداء (منتزه أو حديقة)', 'family', { span: true, dur: Math.max(60, P.maghrib - ts) });
+  } else if (mode === 'am') add('back', P.asr + 40, 'العودة إلى البيت', 'family');
+  else add('rest', P.asr + 30, 'وقت للعائلة والراحة', 'family', { dur: 90 });
   add('maghrib', P.maghrib, 'صلاة المغرب', 'prayer', { prayer: 'maghrib' });
-  if (!(wd === 5 && dayType === 'off')) add('learn_pm', P.maghrib + 25, 'ساعة تطوير مهارات', 'growth', { dur: 45, link: 'growth' });
+  const relax = fri && off;
+  if (!install && !relax) add('learn_pm', P.maghrib + 25, 'ساعة تطوير مهارات', 'growth', { dur: 45, link: 'growth' });
   add('isha', P.isha, 'صلاة العشاء', 'prayer', { prayer: 'isha' });
-  if (!(wd === 5 && dayType === 'off')) add('suppliers_pm', P.isha + 25, 'مراسلة المصانع وطلب الكتالوجات', 'work', { dur: 40, link: 'suppliers' });
-  add('family', P.isha + 70, 'التواصل مع الأهل', 'family', { dur: 30, link: 'family' });
-  const wEnd = dayType === 'off' ? P.isha + 120 : toMin(S.workEnd);
+  if (!install && !relax) add('suppliers_pm', P.isha + 25, 'تطوير المحل: ' + SHOPDEV[idx % SHOPDEV.length], 'work', { dur: 40, link: 'suppliers' });
+  if (off) add('family', P.isha + 70, 'التواصل مع الأهل والأصدقاء', 'family', { dur: 30, link: 'family' });
+  const wEnd = off ? P.isha + 120 : install ? toMin(S.sleep) - 5 : toMin(S.workEnd);
   add('review', wEnd - 15, 'مراجعة اليوم وتخطيط الغد', 'general', { dur: 15 });
   add('sleep', toMin(S.sleep), 'الاستعداد للنوم (أذكار النوم)', 'faith');
   B.sort((a, b) => a.t - b.t || (a.span ? -1 : 0));
@@ -507,7 +514,7 @@ const SKILLS = [
   ['اللغة الإنجليزية لمراسلة المصانع', 'جمل جاهزة لطلب الأسعار والمواصفات والشحن.', 'English for business emails suppliers']
 ];
 
-if (typeof module !== 'undefined') module.exports = { calcPrayers, buildDay, prayersFor, parseTask, localNow, dateKey, addDays, weekday, diffDays, hhmm, toMin, juzRange, wirdPortion, ref, DEFAULT_SETTINGS, CITIES, isRamadan, seasonOf, normAr, SKILLS, SURAHS };
+if (typeof module !== 'undefined') module.exports = { calcPrayers, buildDay, prayersFor, parseTask, localNow, dateKey, addDays, weekday, diffDays, hhmm, toMin, juzRange, wirdPortion, ref, DEFAULT_SETTINGS, CITIES, isRamadan, seasonOf, normAr, SKILLS, SURAHS, SHOPDEV };
 </script>
 <script>
 /* ====== النواة: الحالة، التخزين، الأصوات، التنبيهات، الذكاء الاصطناعي، الصوت ====== */
@@ -541,11 +548,12 @@ function deepMerge(b, o) {
   const r = { ...b }; for (const k in o) r[k] = k in b ? deepMerge(b[k], o[k]) : o[k]; return r;
 }
 
+const APP_VER = '9.1 · زيارة العميل ٩–١٢ + أنواع الأيام والجمعة';
 if("serviceWorker"in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
 const LS = 'asad.state.v1', LSAI = 'asad.ai.v1', LSSND = 'asad.sounds.v1', LSFIRED = 'asad.fired.v1';
 const DEF = {
   settings: { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), defaultDay: 'free', theme: 'auto', fridayRule: 'odd_off', bottomSpace: 'auto', name: '', prayerOn: { fajr: true, dhuhr: true, asr: true, maghrib: true, isha: true } },
-  done: {}, dayType: {}, tasks: [], wird: { pos: 0, pace: 2, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
+  done: {}, dayType: {}, dayOpt: {}, tasks: [], wird: { pos: 0, pace: 2, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
 };
 DEF.settings.sounds.wake = 'long';
 let ST = deepMerge(JSON.parse(JSON.stringify(DEF)), rd(LS, {}));
@@ -557,6 +565,7 @@ function pruneDone() {
   const t = TODAY();
   for (const k of Object.keys(ST.done)) if (diffDays(k, t) > 45) delete ST.done[k];
   for (const k of Object.keys(ST.dayType)) if (diffDays(k, t) > 45) delete ST.dayType[k];
+  for (const k of Object.keys(ST.dayOpt || {})) if (diffDays(k, t) > 45) delete ST.dayOpt[k];
   for (const k of Object.keys(ST.skillLog)) if (diffDays(k, t) > 120) delete ST.skillLog[k];
   ST.chat = ST.chat.slice(-30);
 }
@@ -568,6 +577,8 @@ function fridayType(k) {
   const n = Math.ceil(parseKey(k).d / 7), odd = n % 2 === 1;
   return (r === 'odd_off' ? odd : !odd) ? 'off' : 'free';
 }
+const friModeFor = k => (weekday(k) === 5 && dayTypeFor(k) === 'off') ? ((ST.dayOpt || {})[k] || cfg().friOffDefault || 'pm') : null;
+const dayFor = k => buildDay(k, cfg(), dayTypeFor(k), { fri: friModeFor(k) });
 const dayTypeFor = k => ST.dayType[k] || (weekday(k) === 5 && fridayType(k)) || cfg().defaultDay || 'free';
 const CATCOL = { prayer: 'var(--c-prayer)', faith: 'var(--c-faith)', work: 'var(--c-work)', family: 'var(--c-family)', growth: 'var(--c-growth)', general: 'var(--c-general)', info: 'var(--c-general)' };
 const CATN = { work: 'عمل', family: 'أهل وأسرة', faith: 'إيمانيات', growth: 'تطوير', general: 'عام', prayer: 'صلاة' };
@@ -639,7 +650,7 @@ function fire(a) {
   notify(a.title, a.body || '', a.id);
 }
 function alertsFor(k) {
-  const c = cfg(), D = buildDay(k, c, dayTypeFor(k)), P = D.prayers, out = [];
+  const c = cfg(), D = dayFor(k), P = D.prayers, out = [];
   for (const key of Object.keys(PRAYER_NAMES)) {
     if (c.prayerOn[key] === false) continue;
     const at = absMs(k, P[key], c.tz);
@@ -854,9 +865,21 @@ function taskRow(t, today) {
   return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div></div>`;
 }
 
+const TYPES = [['install', 'تركيبات'], ['visit', 'زيارة عميل'], ['free', 'صباح فاضي'], ['off', 'إجازة']];
+const FRI_TYPES = [['free', 'جمعة دوام'], ['off', 'جمعة إجازة']];
+const FMODES = [['pm', 'خرجة بعد الغداء'], ['am', 'خرجة صباحية'], ['home', 'في البيت']];
+const typeLabel = d => { const t = dayTypeFor(d); if (weekday(d) === 5) return t === 'off' ? 'جمعة إجازة · ' + (FMODES.find(x => x[0] === friModeFor(d)) || FMODES[0])[1] : 'جمعة دوام ٤–١٠'; return (TYPES.find(x => x[0] === t) || TYPES[2])[1]; };
+const segBtns = (list, cur, act) => `<div class="seg">${list.map(([v, l]) => `<button class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('')}</div>`;
+function planCard(k, n) {
+  const tm = addDays(k, 1), tw = weekday(tm); if (n.min < 900 && tw !== 5) return '';
+  const tt = dayTypeFor(tm), fr = tw === 5, off = tt === 'off', D = dayFor(tm), P = D.prayers, bits = [`الفجر ${fmt12(P.fajr)}`];
+  for (const [key, lb] of [['install', 'التركيبات'], ['visit', 'الزيارة'], ['prep', 'تجهيز الغداء'], ['trip', 'الانطلاق'], ['dhuhr', fr ? 'الجمعة' : 'الظهر'], ['office', 'الدوام']]) { const b = D.blocks.find(x => x.key === key); if (b) bits.push(`${lb} ${fmt12(b.t)}`); }
+  return sec(`ترتيب الغد · ${DAYN[tw]}`, 'day', `<div class="small muted" style="margin-bottom:8px">${typeLabel(tm)}</div>${segBtns(fr ? FRI_TYPES : TYPES, tt, 'tmtype')}${fr && off ? `<div style="height:8px"></div>${segBtns(FMODES, friModeFor(tm), 'tmmode')}` : ''}<div class="small muted" style="margin-top:8px">${bits.join(' · ')}</div><div class="row wrap" style="margin-top:10px"><button class="btn sm" data-act="tmtasks">${ic('plus')} أضف مهام التجهيز</button>${fr && off ? `<button class="btn sm ghost" data-act="tripask">${ic('ai')} أفكار أماكن</button><button class="btn sm ghost" data-act="tripmsg">${ic('copy')} رسالة دعوة</button>` : ''}</div>`);
+}
+
 /* ---- اليوم ---- */
 function vToday() {
-  const n = NOW(), k = dateKey(n), c = cfg(), dt = dayTypeFor(k), D = buildDay(k, c, dt), P = D.prayers, keys = Object.keys(PRAYER_NAMES);
+  const n = NOW(), k = dateKey(n), c = cfg(), dt = dayTypeFor(k), D = dayFor(k), P = D.prayers, keys = Object.keys(PRAYER_NAMES);
   let nx = keys.find(x => P[x] > n.min), nd = k, nt;
   if (nx) nt = P[nx]; else { nx = 'fajr'; nd = addDays(k, 1); nt = prayersFor(nd, c).fajr; }
   const dn = ST.done[k] || {}, cnt = D.blocks.filter(b => !b.info && !b.optional && !b.span), dc = cnt.filter(b => dn[b.key]).length, pct = cnt.length ? Math.round(dc * 100 / cnt.length) : 0;
@@ -867,8 +890,7 @@ function vToday() {
     return `<div class="tl-item ${b.info ? 'info' : ''} ${done ? 'done' : ''} ${b.key === nowKey ? 'now' : ''} ${b.t < n.min ? 'past' : ''}" style="--cc:${CATCOL[b.cat] || CATCOL.general}"><div class="tl-t">${fmt12(b.t)}</div><div class="tl-dot"><i></i></div><div class="tl-body"><div class="tl-tt ${b.link ? 'click' : ''}" ${b.link ? `data-act="goto" data-v="${b.link}"` : ''}>${esc(b.title)}${sub ? `<small>${sub}</small>` : ''}</div>${b.info ? '' : `<button class="ck ${done ? 'on' : ''}" data-act="blk" data-k="${k}" data-v="${b.key}" aria-label="تم">${ic('check')}</button>`}</div></div>`;
   }).join('');
   const todayTasks = ST.tasks.filter(t => !t.done && t.date && t.date <= k).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
-  const fri = weekday(k) === 5 && dt === 'off', thu = weekday(k) === 4 && dayTypeFor(addDays(k, 1)) === 'off';
-  const tripCard = (fri || thu) ? sec(fri ? 'رحلة اليوم مع الأهل والأصدقاء' : 'غداً جمعة إجازة', 'users', `<div class="small muted">${fri ? 'بعد الصلاة تسوّقوا ثم عودوا للغداء، وبعد العصر انطلقوا. هذا لقاء الأهل والأصدقاء كل أسبوعين.' : 'تواصل الليلة مع الأهل والأصدقاء وحدّد المكان والموعد للرحلة.'}</div><div class="row wrap" style="margin-top:10px"><button class="btn sm" data-act="tripask">${ic('ai')} اقترح أماكن وأفكاراً</button><button class="btn sm ghost" data-act="tripmsg">${ic('copy')} رسالة دعوة جاهزة</button></div>`) : '';
+  const tripCard = planCard(k, n);
   const df = dueFamily(), ds = dueSup();
   const due = [...df.map(f => `<div class="task"><span class="dot" style="--cc:var(--c-family)"></span><div class="grow"><div class="tt">اتصل بـ ${esc(f.name)}</div><div class="meta">${f.last ? 'آخر تواصل ' + relDate(f.last, k) : 'لم تتواصل بعد'}</div></div><button class="btn sm" data-act="famdone" data-id="${f.id}">تم</button></div>`),
     ...ds.map(s => `<div class="task"><span class="dot" style="--cc:var(--c-work)"></span><div class="grow"><div class="tt">متابعة ${esc(s.name)}</div><div class="meta">${esc(s.status)}${s.product ? ' · ' + esc(s.product) : ''}</div></div><button class="btn sm" data-act="supopen" data-id="${s.id}">فتح</button></div>`)];
@@ -879,7 +901,8 @@ function vToday() {
     <div class="ptimes">${keys.map(x => `<div class="${x === nx ? 'nx' : ''}">${PRAYER_NAMES[x]}<b>${t12(P[x])}</b></div>`).join('')}</div></section>
   <section class="card row"><div class="ring"><svg viewBox="0 0 62 62"><circle cx="31" cy="31" r="26" fill="none" stroke="var(--surface2)" stroke-width="7"/><circle cx="31" cy="31" r="26" fill="none" stroke="var(--accent)" stroke-width="7" stroke-linecap="round" stroke-dasharray="${(pct * 1.6336).toFixed(1)} 163.4"/></svg><b>${pct}%</b></div>
     <div class="grow"><b style="font-family:var(--f-display);font-size:17px">${greet(n)}</b><div class="small muted">أنجزت ${dc} من ${cnt.length} من برنامج اليوم · ${D.season === 'summer' ? 'جدول الصيف' : 'جدول الشتاء'}</div></div></section>
-  <div class="seg" role="tablist">${(weekday(k) === 5 ? [['free', 'جمعة دوام (٤–١٠)'], ['off', 'جمعة إجازة']] : [['install', 'فيه تركيبات'], ['free', 'صباح فاضي'], ['off', 'إجازة']]).map(([v, l]) => `<button class="${dt === v ? 'on' : ''}" data-act="daytype" data-v="${v}">${l}</button>`).join('')}</div>
+  ${segBtns(weekday(k) === 5 ? FRI_TYPES : TYPES, dt, 'daytype')}
+  ${weekday(k) === 5 && dt === 'off' ? segBtns(FMODES, friModeFor(k), 'fmode') : ''}
   ${tripCard}
   <section class="card"><h2>${ic('day')}<span>برنامج اليوم</span></h2><div class="tl">${rows}</div><div class="note" style="margin-top:8px">أوقات الصلوات محسوبة (أم القرى) وتتحرك معها بقية الفقرات. عدّل الأوقات الثابتة من الإعدادات.</div></section>
   ${sec('مهام اليوم', 'tasks', todayTasks.length ? `<div class="gap">${todayTasks.map(t => taskRow(t, k)).join('')}</div>` : empty('tasks', 'لا توجد مهام لليوم', 'اضغط «المهام» وأضف بالكتابة أو الصوت'), `<button class="btn sm ghost" data-act="goto" data-v="tasks">إضافة</button>`)}
@@ -1014,7 +1037,7 @@ function openFam(id, preset) {
 
 /* ---- المساعد ---- */
 function aiContext() {
-  const n = NOW(), k = dateKey(n), c = cfg(), D = buildDay(k, c, dayTypeFor(k));
+  const n = NOW(), k = dateKey(n), c = cfg(), D = dayFor(k);
   const tasks = ST.tasks.filter(t => !t.done).sort((a, b) => (a.date || '9').localeCompare(b.date || '9')).slice(0, 25).map(t => ({ t: t.title, d: t.date, h: t.time }));
   return JSON.stringify({ الآن: `${k} ${hhmm(n.min)}`, المدينة: cityName(), الموسم: D.season === 'summer' ? 'صيف' : 'شتاء', الصلوات: Object.fromEntries(Object.keys(PRAYER_NAMES).map(x => [PRAYER_NAMES[x], hhmm(D.prayers[x])])), برنامج_اليوم: D.blocks.filter(b => !b.info).map(b => hhmm(b.t) + ' ' + b.title), المهام: tasks, أهل_مستحقون: dueFamily().map(f => f.name), موردون_للمتابعة: dueSup().map(s => s.name), الورد: (() => { const p = wirdPortion(ST.wird.pos, ST.wird.pace); return p.finished ? 'أتم الختمة' : p.label; })() });
 }
@@ -1037,7 +1060,7 @@ function localChat(text) {
     const out = ['خطة أسبوعك (مبنية على مهامك وبرنامجك):'];
     for (let i = 0; i < 7; i++) {
       const d = addDays(k, i), tk = ST.tasks.filter(x => !x.done && x.date === d).sort((a, b) => (a.time || '').localeCompare(b.time || '')), sk = SKILLS[dayOfYear(d) % SKILLS.length][0];
-      out.push(`\n**${relDate(d, k)}**${weekday(d) === 5 ? (dayTypeFor(d) === 'off' ? ' · جمعة إجازة' : ' · جمعة دوام ٤–١٠') : ''}`);
+      out.push(`\n**${relDate(d, k)}** · ${typeLabel(d)}`);
       out.push(tk.length ? tk.map(x => `• ${x.title}${x.time ? ' · ' + fmt12(toMin(x.time)) : ''}`).join('\n') : '• لا مهام مسجّلة');
       out.push(`• مهارة: ${sk}`);
     }
@@ -1097,7 +1120,7 @@ function vSettings() {
     ${fld('اسمك (يظهر في رسائل المصانع)', inp('settings.name'))}
     ${fld('جدول الموسم', selb('settings.season', [['auto', 'تلقائي (أبريل–سبتمبر صيف)'], ['summer', 'صيفي دائماً'], ['winter', 'شتوي دائماً']]))}
     ${fld('جمع الشهر (إجازة ودوام)', selb('settings.fridayRule', [['odd_off', 'الأولى والثالثة إجازة، والثانية والرابعة دوام'], ['even_off', 'الثانية والرابعة إجازة، والأولى والثالثة دوام'], ['manual', 'أحدّدها بنفسي كل جمعة']]))}
-    ${fld('طبيعة الصباح الافتراضية', selb('settings.defaultDay', [['free', 'صباح فاضي'], ['install', 'فيه تركيبات'], ['off', 'إجازة']]))}
+    ${fld('طبيعة الصباح الافتراضية', selb('settings.defaultDay', [['free', 'صباح فاضي'], ['install', 'فيه تركيبات'], ['visit', 'زيارة عميل'], ['off', 'إجازة']]))}
     ${fld('المظهر', selb('settings.theme', [['auto', 'حسب الجهاز'], ['light', 'فاتح'], ['dark', 'داكن']]))}
     ${fld('مساحة آمنة أسفل الشاشة (لشريط المنصة أو شارتها)', selb('settings.bottomSpace', [['auto', 'تلقائي'], ['0', 'بدون'], ['32', 'صغيرة'], ['48', 'متوسطة'], ['64', 'كبيرة'], ['88', 'كبيرة جداً']]))}</section>
   <section class="card gap"><h2>${ic('bell')}<span>الاستيقاظ</span></h2><div class="grid2">${fld('الصيف', inp('settings.wake.summer', 'time'))}${fld('الشتاء', inp('settings.wake.winter', 'time'))}</div></section>
@@ -1106,6 +1129,14 @@ function vSettings() {
     <div class="grid2">${fld('الذهاب (صيف)', inp('settings.drop.summer', 'time'))}${fld('الذهاب (شتاء)', inp('settings.drop.winter', 'time'))}${fld('الخروج (صيف)', inp('settings.pick.summer', 'time'))}${fld('الخروج (شتاء)', inp('settings.pick.winter', 'time'))}</div>
     ${fld('مدة الذهاب والعودة (دقيقة)', inp('settings.driveMin', 'number'))}</section>
   <section class="card gap"><h2>${ic('factory')}<span>الدوام والغداء والنوم</span></h2><div class="grid2">${fld('الغداء', inp('settings.lunch', 'time'))}${fld('التجهّز للدوام', inp('settings.leave', 'time'))}${fld('بداية الدوام', inp('settings.workStart', 'time'))}${fld('نهاية الدوام', inp('settings.workEnd', 'time'))}</div>${fld('موعد الاستعداد للنوم', inp('settings.sleep', 'time'))}</section>
+  <section class="card gap"><h2>${ic('day')}<span>أيام التركيبات وخرجات الجمعة</span></h2>
+    <div class="grid2">${fld('انتهاء التركيبات (تقريباً)', inp('settings.installEnd', 'time'))}${fld('الانطلاق من المعرض للبيت', inp('settings.showroomLeave', 'time'))}</div>
+    <div class="grid2">${fld('بداية زيارة العميل', inp('settings.visitStart', 'time'))}${fld('نهاية الزيارة (١٢:٠٠ أو ١١:٣٠)', inp('settings.visitEnd', 'time'))}</div>
+    ${fld('مدة الطريق من المعرض (دقيقة)', inp('settings.homeDrive', 'number'))}
+    ${tog('settings.pickOnInstall', 'إحضار الولد من المدرسة في أيام التركيبات')}
+    ${fld('نوع جمعة الإجازة الافتراضي', selb('settings.friOffDefault', FMODES))}
+    <div class="grid2">${fld('انطلاق الخرجة بعد الغداء', inp('settings.friTripTime', 'time'))}${fld('انطلاق الخرجة الصباحية', inp('settings.friOut', 'time'))}</div>
+    ${fld('بدء تجهيز الغداء (للخرجة الصباحية)', inp('settings.friPrep', 'time'))}</section>
   <section class="card"><h2>${ic('bell')}<span>التنبيهات</span></h2>
     ${tog('settings.alerts.wake', 'الاستيقاظ')}${tog('settings.alerts.pick', 'توصيل واستلام الولد')}${tog('settings.alerts.work', 'الذهاب للدوام')}${tog('settings.alerts.wird', 'ورد القرآن')}
     <div class="sline"><span class="grow">صوت المهام</span><select style="width:150px" data-bind="settings.sounds.task">${soundOptions(c.sounds.task)}</select></div>
@@ -1121,7 +1152,8 @@ function vSettings() {
     <button class="btn ghost block" id="aitest" data-act="aitest">${ic('ai')} اختبار الاتصال</button>
     <div class="small muted">المفتاح لا يدخل في النسخة الاحتياطية. استخدم نموذجاً اقتصادياً لتقليل التكلفة. الاتصال بالمفتاح يعمل عند فتح التطبيق خارج Claude.</div></section>
   <section class="card gap"><h2>${ic('copy')}<span>نسخة احتياطية</span></h2><div class="row wrap"><button class="btn grow" data-act="export">تصدير بياناتي</button><label class="btn ghost grow" style="cursor:pointer">استيراد<input id="impfile" type="file" accept="application/json,.json" style="display:none"></label></div><div class="small muted">بياناتك محفوظة في هذا المتصفح. صدّر نسخة من وقت لآخر.</div>
-    <button class="btn danger block" data-act="reset" id="rstbtn">مسح كل البيانات</button></section>`;
+    <button class="btn danger block" data-act="reset" id="rstbtn">مسح كل البيانات</button></section>
+  <div class="small muted" style="text-align:center">الإصدار ${APP_VER}</div>`;
 }
 
 /* ---- الرسم الرئيسي ---- */
@@ -1142,6 +1174,21 @@ function go(t) { tab = t; closeSheet(); render(); $('#main').scrollTop = 0; }
 /* ---- الأحداث ---- */
 const ACT = {
   goto: el => { const v = el.dataset.v, M = { growth: ['grow', 'skills'], suppliers: ['grow', 'sup'], family: ['grow', 'fam'] }; if (M[v]) { tab = M[v][0]; growT = M[v][1]; closeSheet(); render(); $('#main').scrollTop = 0; } else go(v); },
+  fmode: el => { ST.dayOpt[TODAY()] = el.dataset.v; save(); render(); },
+  tmtype: el => { ST.dayType[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
+  tmmode: el => { ST.dayOpt[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
+  tmtasks: () => {
+    const k = TODAY(), tm = addDays(k, 1), c = cfg(), tt = dayTypeFor(tm), fr = weekday(tm) === 5, mode = friModeFor(tm), done = [], now = NOW().min;
+    const mk = (title, date, time, cat) => { const tag = 'tm|' + date + '|' + title; if (!ST.tasks.some(x => x.tag === tag)) { ST.tasks.push({ id: uid(), tag, title, date, time, cat, repeat: 'none', remind: time ? 15 : -1, done: false }); done.push(title); } };
+    if (fr && tt === 'off') {
+      mk('تأكيد المكان والموعد مع الأهل والأصدقاء', k, now < 1200 ? '20:00' : null, 'family');
+      if (mode === 'am') mk('تجهيز الغداء وتحميل الأغراض للخرجة', tm, c.friPrep || '08:30', 'family');
+      if (mode === 'pm') mk('تجهيز الأغراض للخرجة بعد الغداء', tm, '13:30', 'family');
+    } else if (fr) mk('تجهيز ما أحتاجه للمعرض بعد الجمعة', tm, null, 'work');
+    else if (tt === 'install') { mk('تجهيز أدوات ومواد التركيب', k, now < 1260 ? '21:00' : null, 'work'); mk('تأكيد موعد التركيب مع العميل', k, null, 'work'); }
+    else if (tt === 'visit') mk('تجهيز أدوات القياس وتأكيد موعد زيارة العميل', k, null, 'work');
+    save(); render(); say(done.length ? `أُضيفت ${done.length} مهام` : 'لا مهام جديدة لإضافتها');
+  },
   tripask: () => { go('ai'); sendChat('اقترح لي ٥ أفكار لرحلة عائلية بعد العصر يوم الجمعة مع الأهل والأصدقاء قرب ' + cityName() + '، مع نصائح تجهيز سريعة.'); },
   tripmsg: async () => { const t = 'السلام عليكم ورحمة الله، نقترح لقاءً ورحلة بسيطة يوم الجمعة بعد العصر إن شاء الله. ما رأيكم بالمكان والموعد؟'; try { await navigator.clipboard.writeText(t); say('تم نسخ رسالة الدعوة'); } catch (e) { showToast({ title: 'انسخ الرسالة', body: t, ttl: 12000 }); } }, gosettings: () => go(tab === 'settings' ? 'today' : 'settings'),
   blk: el => toggleBlock(el.dataset.k, el.dataset.v),
