@@ -191,6 +191,16 @@ input[type=time], input[type=date] { direction: ltr; text-align: right; }
 .pill-st { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--surface2); }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
 @media (max-width: 380px) { .hero .nm { font-size: 28px; } .grid2 { grid-template-columns: 1fr; } }
+
+.pi { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.pi label { flex: 1; display: flex; gap: 8px; align-items: center; min-width: 0; }
+.pi input[type=checkbox] { width: 22px; height: 22px; flex: none; }
+.pi input[type=time] { width: 112px; flex: none; }
+.pg { margin: 14px 0 2px; font-weight: 700; color: var(--muted); font-size: 13px; }
+
+.voicebar { position: fixed; left: 12px; right: 12px; bottom: calc(86px + env(safe-area-inset-bottom, 0px)); z-index: 70; display: flex; gap: 8px; align-items: center; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 8px 28px rgba(0,0,0,.25); }
+.voicebar .vtx { flex: 1; min-width: 0; font-weight: 600; }
+.voicebar small { display: block; font-weight: 400; opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
 <div id="app">
   <header class="top">
@@ -300,8 +310,8 @@ const DEFAULT_SETTINGS = {
   pick: { summer: '12:15', winter: '12:45' },
   driveMin: 15,
   lunch: '14:30', leave: '15:00', workStart: '16:00', workEnd: '22:00', sleep: '22:45',
-  familyEvery: 2, soundSource: 'app', installEnd: '16:00', visitStart: '09:00', visitEnd: '12:00', showroomLeave: '20:00', homeDrive: 15, pickOnInstall: false, friOffDefault: 'pm', friTripTime: '15:00', friOut: '09:30', friPrep: '08:30',
-  alerts: { prayer: true, wake: true, pick: true, work: true, wird: true, pre: 10 },
+  planAt: '21:30', voiceSilence: 7, defRemind: 10, accountsAt: '20:30', soundSource: 'app', installEnd: '16:00', visitStart: '09:00', visitEnd: '12:00', showroomLeave: '20:00', homeDrive: 15, pickOnInstall: false, friOffDefault: 'pm', friTripTime: '15:00', friOut: '09:30', friPrep: '08:30',
+  alerts: { prayer: true, wake: true, pick: true, work: true, wird: true, plan: true, pre: 10 },
   sounds: { fajr: 'bell', dhuhr: 'bell', asr: 'bell', maghrib: 'bell', isha: 'bell', task: 'urgent', block: 'soft' }
 };
 function seasonOf(k, S) {
@@ -326,7 +336,7 @@ function buildDay(k, S, dayType, opt = {}) {
   const add = (key, t, title, cat, extra = {}) => B.push({ key, t: Math.round(t), title, cat, ...extra });
   add('wake', toMin(S.wake[se]), 'الاستيقاظ والوضوء', 'faith', { alert: 'wake' });
   add('fajr', P.fajr, 'صلاة الفجر', 'prayer', { prayer: 'fajr' });
-  add('adhkar', P.fajr + 12, 'أذكار الصباح', 'faith', { link: 'links' });
+  add('adhkar', P.fajr + 12, 'أذكار الصباح', 'faith', { link: 'links:adhkar' });
   add('wird', P.fajr + 25, 'ورد القرآن مع التفسير', 'faith', { alert: 'wird', link: 'wird' });
   if (fri) add('kahf', P.fajr + 40, 'قراءة سورة الكهف (سنّة يوم الجمعة)', 'faith');
   add('sunrise', P.sunrise, 'الشروق', 'info', { info: true });
@@ -344,44 +354,33 @@ function buildDay(k, S, dayType, opt = {}) {
   else if (mode === 'am') {
     add('prep', toMin(S.friPrep || '08:30'), 'تجهيز الغداء وتحميل الأغراض', 'family', { dur: 60 });
     add('trip', out, 'خرجة عائلية إلى منتزه أو حديقة', 'family', { span: true, dur: Math.max(60, P.asr + 40 - out) });
-  } else if (!off) {
-    add('learn_am', free0, 'وقت التطوير: تعلّم وقراءة', 'growth', { dur: 60, link: 'growth' });
-    add('suppliers_am', free0 + 70, 'تواصل مع المصانع والموردين', 'work', { dur: 40, link: 'suppliers' });
-    add('home', free0 + 120, 'مهام البيت والإصلاحات', 'general', { dur: 60 });
   }
   if (fri && mode !== 'am') add('jumua_prep', P.dhuhr - 60, 'الاغتسال والتطيّب والتبكير للجمعة', 'faith');
   add('dhuhr', P.dhuhr, fri ? (mode === 'am' ? 'صلاة الجمعة (في الطريق)' : 'صلاة الجمعة') : 'صلاة الظهر', 'prayer', { prayer: 'dhuhr' });
   if (fri && mode !== 'am') add('market', P.dhuhr + 45, 'السوق بجانب المسجد وشراء الأغراض', 'family', { dur: 35 });
-  if (!install && !fri) add('nap', Math.max(P.dhuhr + 40, (pickAt ?? 0) + 40), 'قيلولة قصيرة (٢٠–٣٠ دقيقة)', 'general', { optional: true, dur: 25 });
   const lunchT = fri ? (mode === 'am' ? P.dhuhr + 40 : Math.min(toMin(S.lunch), P.asr - 25)) : toMin(S.lunch);
   add('lunch', lunchT, mode === 'am' ? 'الغداء في المنتزه' : (fri && off ? 'العودة للبيت والغداء' : 'الغداء'), 'general', { dur: 30 });
   if (!off && !install) add('leave', toMin(S.leave), 'التجهّز للعصر والذهاب للدوام', 'work', { alert: 'work' });
   add('asr', P.asr, 'صلاة العصر', 'prayer', { prayer: 'asr' });
-  add('adhkar_pm', P.asr + 25, 'أذكار المساء', 'faith', { link: 'links' });
+  add('adhkar_pm', P.asr + 25, 'أذكار المساء', 'faith', { link: 'links:adhkar' });
   const lv = toMin(S.showroomLeave || '20:00'), drive = S.homeDrive ?? 15, arrive = lv + drive;
   if (install) {
     add('showroom', instEnd, 'إكمال الوقت في المعرض (إن انتهت التركيبات)', 'work', { span: true, dur: Math.max(30, lv - instEnd) });
     add('homeleave', lv, `الانطلاق من المعرض إلى البيت (الوصول ${fmt12(arrive)})`, 'work', { dur: drive });
     add('dinner', arrive + 15, 'الاستحمام والعشاء والجلوس مع الأهل', 'family', { dur: 60 });
-    add('accounts', arrive + 80, 'حسابات تكتيك وإدخال بيانات الشغل (١٥ دقيقة)', 'work', { dur: 15 });
+    add('accounts', arrive + 80, 'حسابات تكتيك وإدخال بيانات الشغل (١٥ دقيقة)', 'work', { dur: 15, link: 'links:work' });
     add('clients', arrive + 100, 'الرد على العملاء إن وُجدوا', 'work', { dur: 15 });
   } else if (!off) {
     add('office', toMin(S.workStart), 'الدوام في معرض الديكور', 'work', { span: true, dur: toMin(S.workEnd) - toMin(S.workStart) });
-    add('quotes', toMin(S.workStart) + 15, 'متابعة العملاء وعروض الأسعار', 'work', { dur: 45 });
   } else if (mode === 'pm') {
     const ts = toMin(S.friTripTime || '15:00');
     add('trip', ts, 'خرجة عائلية بعد الغداء (منتزه أو حديقة)', 'family', { span: true, dur: Math.max(60, P.maghrib - ts) });
   } else if (mode === 'am') add('back', P.asr + 40, 'العودة إلى البيت', 'family');
   else add('rest', P.asr + 30, 'وقت للعائلة والراحة', 'family', { dur: 90 });
   add('maghrib', P.maghrib, 'صلاة المغرب', 'prayer', { prayer: 'maghrib' });
-  const relax = fri && off;
-  if (!install && !relax) add('learn_pm', P.maghrib + 25, 'ساعة تطوير مهارات', 'growth', { dur: 45, link: 'growth' });
   add('isha', P.isha, 'صلاة العشاء', 'prayer', { prayer: 'isha' });
-  const thu = wd === 4, every = Math.max(1, S.familyEvery || 2), famOn = install ? thu : (fri || thu || ((diffDays('2026-01-01', k) % every) + every) % every === 0);
-  if (!install && !relax) add('suppliers_pm', P.isha + (famOn ? 50 : 25), 'تطوير المحل: ' + SHOPDEV[idx % SHOPDEV.length], 'work', { dur: 40, link: 'suppliers' });
-  if (famOn) add('family', install ? Math.max(P.isha + 15, arrive + 120) : P.isha + 15, thu ? 'رسالة الجمعة للأهل والأصدقاء (بعد العشاء)' : (fri ? 'التواصل مع الأهل والأصدقاء (الجمعة)' : 'التواصل مع الأهل والأصدقاء (بعد العشاء)'), 'family', { dur: 30, link: thu ? 'famsg' : 'family' });
   const wEnd = off ? P.isha + 120 : install ? toMin(S.sleep) - 5 : toMin(S.workEnd);
-  add('review', wEnd - 15, 'مراجعة اليوم وتخطيط الغد', 'general', { dur: 15 });
+  add('review', toMin(S.planAt || '21:30'), 'حدّد مهام الغد (اختر من المقترحات)', 'general', { dur: 15, alert: 'plan', link: 'plan' });
   add('sleep', toMin(S.sleep), 'الاستعداد للنوم (أذكار النوم)', 'faith');
   B.sort((a, b) => a.t - b.t || (a.span ? -1 : 0));
   return { blocks: B, prayers: P, season: se };
@@ -550,17 +549,18 @@ function deepMerge(b, o) {
   const r = { ...b }; for (const k in o) r[k] = k in b ? deepMerge(b[k], o[k]) : o[k]; return r;
 }
 
-const APP_VER = '11 · مصدر النغمة + تنبيه خارجي + ورد مرن + روابطي';
+const APP_VER = '13 · فتح التطبيقات الخارجية + ورد مفتوح + مراجعة اليوم + صوت أطول';
 if("serviceWorker"in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
 const LS = 'asad.state.v1', LSAI = 'asad.ai.v1', LSSND = 'asad.sounds.v1', LSFIRED = 'asad.fired.v1';
 const DEF = {
   settings: { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), defaultDay: 'free', theme: 'auto', fridayRule: 'odd_off', bottomSpace: 'auto', name: '', prayerOn: { fajr: true, dhuhr: true, asr: true, maghrib: true, isha: true } },
-  done: {}, dayType: {}, dayOpt: {}, contacts: [], links: [{ id: 'l1', name: 'القرآن الكريم (quran.com)', url: 'https://quran.com/ar', kind: 'quran' }, { id: 'l2', name: 'التفسير (tafsir.app)', url: 'https://tafsir.app/', kind: 'tafsir' }, { id: 'l3', name: 'أذكار المسلم (حصن المسلم)', url: 'https://hisnmuslim.com/', kind: 'adhkar' }], tasks: [], wird: { pos: 0, pace: 2, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
+  done: {}, dayType: {}, dayOpt: {}, contacts: [], links: [{ id: 'l1', name: 'القرآن الكريم (quran.com)', url: 'https://quran.com/ar', kind: 'quran' }, { id: 'l2', name: 'التفسير (tafsir.app)', url: 'https://tafsir.app/', kind: 'tafsir' }, { id: 'l3', name: 'أذكار المسلم (حصن المسلم)', url: 'https://hisnmuslim.com/', kind: 'adhkar' }], tasks: [], wird: { pos: 0, pace: 0, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
 };
 DEF.settings.sounds.wake = 'long';
 let ST = deepMerge(JSON.parse(JSON.stringify(DEF)), rd(LS, {}));
 let SND = rd(LSSND, []);
 let FIRED = rd(LSFIRED, {});
+if (!ST.settings.wirdV2) { ST.wird.pace = 0; ST.settings.wirdV2 = 1; }
 if (!ST.settings.soundV2) { ST.settings.sounds.task = 'urgent'; ST.settings.soundV2 = 1; }
 let saveT = null;
 function save() { clearTimeout(saveT); saveT = setTimeout(() => { pruneDone(); wr(LS, ST); }, 250); }
@@ -673,16 +673,18 @@ function linkContact(p) {
   if (c) { p.contact = c.name; p.phone = c.phone || ''; } else p.contact = w[0];
   return p;
 }
-const mkTask = p => { linkContact(p); return { id: uid(), title: p.title, date: p.date, time: p.time, cat: p.cat, repeat: p.repeat, remind: 0, done: false, contact: p.contact || '', phone: p.phone || '' }; };
+const mkTask = p => { linkContact(p); return { id: uid(), title: p.title, date: p.date, time: p.time, cat: p.cat, repeat: p.repeat, remind: cfg().defRemind ?? 10, done: false, contact: p.contact || '', phone: p.phone || '' }; };
 function fire(a) {
   const acts = [];
+  if (a.plan) acts.push({ label: 'مراجعة اليوم', fn: () => { stopRing(); openReview(); } });
+  if (a.appKind) acts.push({ label: 'فتح التطبيق', fn: () => { stopRing(); launchKind(a.appKind); } });
   if (a.taskId) {
     if (a.phone && waNum(a.phone)) { acts.push({ label: 'واتساب', fn: () => { stopRing(); openWA(a.phone); } }); acts.push({ label: 'اتصال', fn: () => { stopRing(); openTel(a.phone); } }); }
     acts.push({ label: 'تم', fn: () => { stopRing(); toggleTask(a.taskId, true); } });
     acts.push({ label: 'بعد ١٠ د', fn: () => { stopRing(); SNZ.push({ ...a, at: Date.now() + 600000, id: a.id + '|z' + Date.now() }); } });
   }
   const nOk = ('Notification' in window) && Notification.permission === 'granted';
-  if ((cfg().soundSource || 'app') === 'app' || !nOk) startRing(a.sound, a.taskId ? 5 : (a.loop ? 3 : 1));
+  if ((cfg().soundSource || 'app') === 'app' || !nOk) startRing(a.sound, a.taskId && !a.pre ? 5 : (a.loop ? 3 : 1));
   try { navigator.vibrate && navigator.vibrate([400, 150, 400, 150, 400]); } catch (e) { }
   showToast({ title: a.title, body: a.body, actions: acts });
   notify(a);
@@ -696,10 +698,13 @@ function alertsFor(k) {
     if (c.alerts.pre > 0) out.push({ id: `${k}|pre|${key}`, at: at - c.alerts.pre * 60000, title: `بقي ${c.alerts.pre} دقيقة على صلاة ${PRAYER_NAMES[key]}`, body: fmt12(P[key]), sound: 'soft' });
   }
   for (const t of ST.tasks) {
-    if (t.done || t.date !== k || !t.time || t.remind == null || t.remind < 0) continue;
-    out.push({ id: `${k}|t|${t.id}|${t.time}`, at: absMs(k, toMin(t.time), c.tz) - t.remind * 60000, title: t.title, body: 'تذكير بمهمة · ' + fmt12(toMin(t.time)), sound: t.sound || c.sounds.task, taskId: t.id, phone: t.phone || '', win: 1800000, loop: true });
+    if (t.done || !t.time || t.remind == null || t.remind < 0) continue;
+    const nxt = t.date === addDays(k, 1) && t.remind >= 720; if (t.date !== k && !nxt) continue;
+    const at = absMs(t.date, toMin(t.time), c.tz), base = { taskId: t.id, phone: t.phone || '', appKind: t.appKind || '' }, r = t.remind;
+    if (r > 0) out.push({ ...base, id: `${k}|t|${t.id}|${t.time}|pre${nxt ? 'n' : ''}`, at: at - r * 60000, title: `${r >= 1440 ? 'غداً ' + fmt12(toMin(t.time)) : r >= 60 ? 'بعد ' + Math.round(r / 60) + ' ساعة' : 'بعد ' + r + ' دقيقة'}: ${t.title}`, body: 'مهمة قادمة · ' + fmt12(toMin(t.time)), sound: 'soft', pre: true });
+    if (t.date === k) out.push({ ...base, id: `${k}|t|${t.id}|${t.time}`, at, title: t.title, body: 'حان وقت المهمة · ' + fmt12(toMin(t.time)), sound: t.sound || c.sounds.task, win: 1800000, loop: true });
   }
-  for (const b of D.blocks) if (b.alert && c.alerts[b.alert]) out.push({ id: `${k}|b|${b.key}`, at: absMs(k, b.t, c.tz), title: b.title, body: fmt12(b.t), sound: b.key === 'wake' ? c.sounds.wake : c.sounds.block });
+  for (const b of D.blocks) if (b.alert && c.alerts[b.alert]) out.push({ id: `${k}|b|${b.key}`, at: absMs(k, b.t, c.tz), title: b.title, body: fmt12(b.t), sound: b.key === 'wake' ? c.sounds.wake : c.sounds.block, plan: b.key === 'review' });
   return out;
 }
 function tick() {
@@ -802,24 +807,45 @@ function appendVoice(t) {
   voiceTarget.value = (v ? v + (/^\s/.test(t) ? '' : ' ') : '') + (v ? t : t.trimStart());
   voiceTarget.dispatchEvent(new Event('input', { bubbles: true }));
 }
+let vFinal = '', vInt = '', vLast = 0, vTimer = null, vStop = false;
+const voiceSilence = () => { const v = cfg().voiceSilence; return v == null ? 7 : +v; };
+function voiceBar(on) {
+  let b = $('#voicebar'); if (!on) { b && b.remove(); return; }
+  if (!b) { b = document.createElement('div'); b.id = 'voicebar'; b.className = 'voicebar'; document.body.append(b); }
+  const can = voiceTarget && voiceTarget.closest('.addbar') && voiceTarget.closest('.addbar').querySelector('[data-act]:not(.mic)');
+  b.innerHTML = `<span class="vtx">أسمعك… <small id="vtxt"></small></span><button class="btn sm ghost" data-v="end">إنهاء</button>${can ? '<button class="btn sm" data-v="send">إنهاء وإرسال</button>' : ''}`;
+  b.onclick = e => { const v = e.target.closest('[data-v]'); if (v) finishVoice(v.dataset.v === 'send'); };
+}
+async function finishVoice(send) {
+  clearInterval(vTimer); vTimer = null; vStop = true; const btn = voiceTarget && voiceTarget.closest('.addbar') && voiceTarget.closest('.addbar').querySelector('[data-act]:not(.mic)');
+  try { if (DICT) await DICT.stop(); else if (SR) SR.stop(); } catch (e) { }
+  if (!DICT) { const t = (vFinal + ' ' + vInt).trim(); if (t) appendVoice(t); }
+  vFinal = vInt = ''; listening = false; setMic(false); voiceBar(false);
+  if (send && btn) setTimeout(() => btn.click(), 80);
+}
+function voiceWatch() {
+  vLast = Date.now(); clearInterval(vTimer);
+  vTimer = setInterval(() => { const sil = voiceSilence(), left = sil - (Date.now() - vLast) / 1000, t = $('#vtxt'); if (t) t.textContent = (vInt || '') + (sil ? `  (ينتهي بعد ${Math.max(0, Math.ceil(left))} ث من الصمت)` : '  (اضغط إنهاء عند الانتهاء)'); if (sil && left <= 0) finishVoice(false); }, 400);
+}
 function micClick(inputId, btn) {
-  if (listening) { try { DICT ? DICT.stop() : SR && SR.stop(); } catch (e) { } listening = false; setMic(false); return; }
-  voiceTarget = document.getElementById(inputId); voiceBtn = btn;
+  if (listening) { finishVoice(false); return; }
+  voiceTarget = document.getElementById(inputId); voiceBtn = btn; vFinal = vInt = ''; vStop = false;
   if (DICT) {
-    listening = true; setMic(true);
+    listening = true; setMic(true); voiceBar(true); voiceWatch();
     DICT.start({ language: 'ar' }).catch(e => {
-      if (e && e.code === 'unavailable') { DICT.start().catch(() => { listening = false; setMic(false); }); return; }
-      listening = false; setMic(false); if (e && e.code !== 'stopped' && e.code !== 'dismissed') say('تعذّر تشغيل الإملاء الصوتي', 'warn');
+      if (e && e.code === 'unavailable') { DICT.start().catch(() => { finishVoice(false); }); return; }
+      finishVoice(false); if (e && e.code !== 'stopped' && e.code !== 'dismissed') say('تعذّر تشغيل الإملاء الصوتي', 'warn');
     });
     return;
   }
   const R = SRC(); if (!R) { say('الإدخال الصوتي غير متاح هنا', 'warn'); return; }
   try {
-    SR = new R(); SR.lang = 'ar-SA'; SR.interimResults = false; SR.continuous = false;
-    SR.onresult = e => appendVoice(Array.from(e.results).map(r => r[0].transcript).join(' '));
-    SR.onend = () => { listening = false; setMic(false); }; SR.onerror = () => { listening = false; setMic(false); };
-    listening = true; setMic(true); SR.start();
-  } catch (e) { listening = false; setMic(false); }
+    SR = new R(); SR.lang = 'ar-SA'; SR.interimResults = true; SR.continuous = true;
+    SR.onresult = e => { vLast = Date.now(); let it = ''; for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i]; if (r.isFinal) vFinal += ' ' + r[0].transcript; else it += r[0].transcript; } vInt = it; };
+    SR.onend = () => { if (listening && !vStop) { try { SR.start(); } catch (e) { finishVoice(false); } } };
+    SR.onerror = e => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { finishVoice(false); say('اسمح للمتصفح باستخدام الميكروفون', 'warn'); } };
+    listening = true; setMic(true); voiceBar(true); voiceWatch(); SR.start();
+  } catch (e) { listening = false; setMic(false); voiceBar(false); }
 }
 async function initCaps() {
   const c = window.claude;
@@ -828,7 +854,7 @@ async function initCaps() {
     try { DL = await c.use('downloads'); } catch (e) { }
     try {
       DICT = await c.use('dictation');
-      if (DICT) { DICT.onFinal(({ text }) => appendVoice(text)); DICT.onState(({ state }) => { if (state === 'idle') { listening = false; setMic(false); } }); }
+      if (DICT) { DICT.onFinal(({ text }) => { vLast = Date.now(); appendVoice(text); }); DICT.onPartial && DICT.onPartial(() => { vLast = Date.now(); }); DICT.onState(({ state }) => { if (state === 'idle') { listening = false; setMic(false); voiceBar(false); clearInterval(vTimer); } }); }
     } catch (e) { }
   }
   document.body.classList.toggle('hidden-mic', !micAvail());
@@ -900,33 +926,44 @@ function taskRow(t, today) {
   if (t.time) meta.push(fmt12(toMin(t.time)));
   if (t.repeat && t.repeat !== 'none') meta.push(t.repeat === 'daily' ? 'يومياً' : 'أسبوعياً');
   if (t.time && t.remind != null && t.remind >= 0) meta.push(ic('bell').replace('class="i ', 'style="width:14px;height:14px" class="i '));
-  return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div>${t.contact || t.phone ? `<button class="btn sm ghost" data-act="tact" data-id="${t.id}" aria-label="تواصل">${ic('phone')}</button>` : ''}</div>`;
+  return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div>${t.contact || t.phone || t.appKind ? `<button class="btn sm ghost" data-act="tact" data-id="${t.id}" aria-label="تواصل">${ic('phone')}</button>` : ''}</div>`;
 }
 
-const TYPES = [['install', 'تركيبات'], ['visit', 'زيارة عميل'], ['free', 'صباح فاضي'], ['off', 'إجازة']];
+const TYPES = [['install', 'تركيبات'], ['free', 'صباح فاضي'], ['off', 'إجازة']];
 const FRI_TYPES = [['free', 'جمعة دوام'], ['off', 'جمعة إجازة']];
 const FMODES = [['pm', 'خرجة بعد الغداء'], ['am', 'خرجة صباحية'], ['home', 'في البيت']];
-const typeLabel = d => { const t = dayTypeFor(d); if (weekday(d) === 5) return t === 'off' ? 'جمعة إجازة · ' + (FMODES.find(x => x[0] === friModeFor(d)) || FMODES[0])[1] : 'جمعة دوام ٤–١٠'; return (TYPES.find(x => x[0] === t) || TYPES[2])[1]; };
+const typeLabel = d => { const t = dayTypeFor(d); if (weekday(d) === 5) return t === 'off' ? 'جمعة إجازة · ' + (FMODES.find(x => x[0] === friModeFor(d)) || FMODES[0])[1] : 'جمعة دوام ٤–١٠'; return (TYPES.find(x => x[0] === t) || (t === 'visit' ? [0, 'زيارة عميل'] : TYPES[1]))[1]; };
 const segBtns = (list, cur, act) => `<div class="seg">${list.map(([v, l]) => `<button class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}">${l}</button>`).join('')}</div>`;
 function planCard(k, n) {
   const tm = addDays(k, 1), tw = weekday(tm); if (n.min < 900 && tw !== 5) return '';
   const tt = dayTypeFor(tm), fr = tw === 5, off = tt === 'off', D = dayFor(tm), P = D.prayers, bits = [`الفجر ${fmt12(P.fajr)}`];
-  for (const [key, lb] of [['install', 'التركيبات'], ['visit', 'الزيارة'], ['prep', 'تجهيز الغداء'], ['trip', 'الانطلاق'], ['dhuhr', fr ? 'الجمعة' : 'الظهر'], ['office', 'الدوام']]) { const b = D.blocks.find(x => x.key === key); if (b) bits.push(`${lb} ${fmt12(b.t)}`); }
-  return sec(`ترتيب الغد · ${DAYN[tw]}`, 'day', `<div class="small muted" style="margin-bottom:8px">${typeLabel(tm)}</div>${segBtns(fr ? FRI_TYPES : TYPES, tt, 'tmtype')}${fr && off ? `<div style="height:8px"></div>${segBtns(FMODES, friModeFor(tm), 'tmmode')}` : ''}<div class="small muted" style="margin-top:8px">${bits.join(' · ')}</div><div class="row wrap" style="margin-top:10px"><button class="btn sm" data-act="tmtasks">${ic('plus')} أضف مهام التجهيز</button>${fr && off ? `<button class="btn sm ghost" data-act="tripask">${ic('ai')} أفكار أماكن</button><button class="btn sm ghost" data-act="tripmsg">${ic('copy')} رسالة دعوة</button>` : ''}</div>`);
+  for (const [key, lb] of [['install', 'التركيبات'], ['prep', 'تجهيز الغداء'], ['trip', 'الانطلاق'], ['dhuhr', fr ? 'الجمعة' : 'الظهر'], ['office', 'الدوام']]) { const b = D.blocks.find(x => x.key === key); if (b) bits.push(`${lb} ${fmt12(b.t)}`); }
+  const cnt = ST.tasks.filter(t => t.date === tm && !t.done).length;
+  return sec(`ترتيب الغد · ${DAYN[tw]}`, 'day', `<div class="small muted" style="margin-bottom:8px">${typeLabel(tm)}</div>${segBtns(fr ? FRI_TYPES : TYPES, tt, 'tmtype')}${fr && off ? `<div style="height:8px"></div>${segBtns(FMODES, friModeFor(tm), 'tmmode')}` : ''}<div class="small muted" style="margin-top:8px">${bits.join(' · ')}</div><div class="row wrap" style="margin-top:10px"><button class="btn grow" data-act="planopen" data-d="tomorrow">${ic('plus')} اختر مهام الغد${cnt ? ` (${cnt})` : ''}</button>${fr && off ? `<button class="btn sm ghost" data-act="tripask">${ic('ai')} أفكار أماكن</button><button class="btn sm ghost" data-act="tripmsg">${ic('copy')} رسالة دعوة</button>` : ''}</div>`);
 }
 
+const REMS = [[-1, 'بدون'], [0, 'عند الوقت'], [5, 'قبل ٥ دقائق'], [10, 'قبل ١٠ دقائق'], [30, 'قبل ٣٠ دقيقة'], [60, 'قبل ساعة'], [120, 'قبل ساعتين'], [1440, 'قبل يوم']];
+const LK_KINDS = [['adhkar', 'أذكار'], ['quran', 'قرآن'], ['tafsir', 'تفسير'], ['work', 'حسابات وعمل'], ['other', 'أخرى']];
+const playId = u => { const m = /play\.google\.com\/store\/apps\/details\?[^#]*\bid=([\w.]+)/i.exec(u || ''); return m ? m[1] : ''; };
+function launchLink(l) {
+  const pkg = l.pkg || playId(l.url);
+  if (pkg && /android/i.test(navigator.userAgent)) { const fb = l.url && /^https?:/i.test(l.url) ? l.url : 'https://play.google.com/store/apps/details?id=' + pkg; location.href = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${pkg};S.browser_fallback_url=${encodeURIComponent(fb)};end`; }
+  else if (l.url) window.open(l.url, '_blank'); else say('أضف رابطاً أو اسم حزمة لهذا التطبيق', 'warn');
+}
+function launchKind(kind) { const L = (ST.links || []).filter(x => x.kind === kind); if (L.length === 1) return launchLink(L[0]); openLinks(kind); }
 function linksCard() {
   const L = ST.links || [];
-  return sec('روابطي: القرآن والتفسير والأذكار', 'link', `<div class="row wrap">${L.map(l => `<a class="btn ghost sm" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(l.url)}">${esc(l.name)}</a>`).join('') || '<span class="small muted">لا روابط بعد</span>'}</div><button class="btn sm block" style="margin-top:8px" data-act="lkopen">${ic('plus')} إضافة أو تعديل روابطي</button>`);
+  return sec('تطبيقاتي: القرآن والتفسير والأذكار والحسابات', 'link', `<div class="row wrap">${L.map(l => `<button class="btn ghost sm" data-act="lkgo" data-id="${l.id}">${esc(l.name)}</button>`).join('') || '<span class="small muted">لا تطبيقات بعد</span>'}</div><button class="btn sm block" style="margin-top:8px" data-act="lkopen">${ic('plus')} إضافة أو تعديل تطبيقاتي</button>`);
 }
-const LK_KINDS = [['adhkar', 'أذكار'], ['quran', 'قرآن'], ['tafsir', 'تفسير'], ['other', 'أخرى']];
-function openLinks() {
-  const L = ST.links || [];
-  openSheet(`<h2 class="h2">روابطي (تطبيقات أو مواقع أختارها أنا)</h2>
-  <div class="gap">${L.map(l => `<div class="card"><div class="row"><div class="grow"><b>${esc(l.name)}</b><div class="small muted" style="word-break:break-all">${esc(l.url)}</div></div><a class="btn sm" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(l.url)}">فتح</a><button class="btn sm danger" data-act="lkdel" data-id="${l.id}">${ic('trash')}</button></div></div>`).join('')}</div>
-  <h3 style="margin:14px 0 6px">إضافة رابط</h3>
-  ${fld('الاسم', '<input id="lk-name" type="text" placeholder="مثال: تطبيقي المفضل للأذكار">')}${fld('الرابط (موقع، أو رابط تطبيق من متجر قوقل)', '<input id="lk-url" type="url" inputmode="url" dir="ltr" placeholder="https://...">')}
-  ${fld('النوع', `<select id="lk-kind">${LK_KINDS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>`)}
+function openLinks(kind) {
+  const L = ST.links || [], shown = kind ? L.filter(x => x.kind === kind).concat(L.filter(x => x.kind !== kind)) : L;
+  openSheet(`<h2 class="h2">تطبيقاتي وروابطي</h2><div class="small muted">اختر ما يفتحه البرنامج: تطبيق مثبّت على جوالك أو موقع.</div>
+  <div class="gap" style="margin-top:8px">${shown.map(l => `<div class="card"><div class="row"><div class="grow"><b>${esc(l.name)}</b> <span class="badge">${(LK_KINDS.find(x => x[0] === l.kind) || [0, ''])[1]}</span><div class="small muted" style="word-break:break-all">${esc(l.pkg || l.url || '')}</div></div><button class="btn sm" data-act="lkgo" data-id="${l.id}">فتح</button><button class="btn sm danger" data-act="lkdel" data-id="${l.id}">${ic('trash')}</button></div></div>`).join('') || '<div class="small muted">لا شيء بعد</div>'}</div>
+  <h3 style="margin:14px 0 6px">إضافة تطبيق أو رابط</h3>
+  ${fld('الاسم', '<input id="lk-name" type="text" placeholder="مثال: تطبيق القرآن، تطبيق الحسابات">')}
+  ${fld('رابط التطبيق في متجر قوقل بلاي (الصقه ليُفتح التطبيق المثبّت) أو رابط موقع', '<input id="lk-url" type="url" inputmode="url" dir="ltr" placeholder="https://play.google.com/store/apps/details?id=...">')}
+  ${fld('أو اسم الحزمة مباشرة (اختياري)', '<input id="lk-pkg" type="text" dir="ltr" placeholder="com.example.app">')}
+  ${fld('الاستخدام', `<select id="lk-kind">${LK_KINDS.map(([v, l]) => `<option value="${v}" ${kind === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
   <button class="btn block" data-act="lkadd">${ic('plus')} إضافة</button>`);
 }
 const dlText = (name, data, mime) => { try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([data], { type: mime })); a.download = name; document.body.append(a); a.click(); a.remove(); return true; } catch (e) { return false; } };
@@ -940,6 +977,64 @@ function openExtAlert(id) {
   <button class="btn ghost block" data-act="icsdl" data-id="${id}">${ic('copy')} ملف تقويم (.ics) يُفتح بتطبيق التقويم</button>
   <a class="btn ghost block" style="text-decoration:none" href="${alarmLink(t)}">${ic('bell')} منبّه الساعة (قد لا يعمل على بعض الأجهزة)</a></div>`);
 }
+const PLAN_ITEMS = [
+  ['الشغل والموردون', 'تواصل مع مصنع أو مورّد', 'of', 'work'], ['الشغل والموردون', 'طلب كتالوج وقائمة أسعار', 'of', 'work'], ['الشغل والموردون', 'طلب وكالة أو توزيع', 'of', 'work'], ['الشغل والموردون', 'تواصل مع مقاول', 'of', 'work'], ['الشغل والموردون', 'تواصل مع عميل جديد', 'of', 'work'], ['الشغل والموردون', 'متابعة عرض سعر لعميل', 'of', 'work'], ['الشغل والموردون', 'طلب خامات ومواد', 'of', 'work'],
+  ['التسويق', 'وضع إعلان في السوشيال ميديا', 'of', 'work'], ['التسويق', 'تنزيل فيديو في السوشيال ميديا', 'of', 'work'], ['التسويق', 'تصوير منتج أو عمل منجز', 'am', 'work'], ['التسويق', 'الرد على استفسارات العملاء', 'of', 'work'],
+  ['المحل', 'إضافة منتج جديد للمعرض', 'of', 'work'], ['المحل', 'ترتيب المعرض أو تغيير العرض', 'of', 'work'], ['المحل', 'SHOPDEV', 'of', 'work'],
+  ['العملاء', 'زيارة عميل أو أخذ مقاسات', 'visit', 'work'],
+  ['البيت', 'إصلاحات في البيت', 'am', 'general'], ['البيت', 'مشوار أو تسوق', 'am', 'general'],
+  ['الأهل والأصدقاء', 'اتصال بالأهل', 'night', 'family'], ['الأهل والأصدقاء', 'رسالة للأهل والأصدقاء (جمعة أو تحية)', 'night', 'family'], ['الأهل والأصدقاء', 'التواصل مع صديق', 'night', 'family'],
+  ['التطوير', 'ساعة تعلّم: تركيب وتشطيب وديكور', 'night', 'growth'], ['التطوير', 'مشاهدة درس في التأثيث والتشطيب', 'night', 'growth']
+];
+function slotTimes(k) {
+  const c = cfg(), D = dayFor(k), P = D.prayers, tp = dayTypeFor(k), has = x => D.blocks.find(b => b.key === x), dr = has('drop'), inst = tp === 'install', off = tp === 'off';
+  let am = dr ? dr.t + (dr.dur || 15) + 10 : P.sunrise + 60; am = Math.min(am, P.dhuhr - 40);
+  const night = inst ? Math.max(P.isha + 15, toMin(c.showroomLeave || '20:00') + (c.homeDrive ?? 15) + 110) : P.isha + 15;
+  return { am: inst ? night : am, of: inst ? night : (off ? P.asr + 30 : toMin(c.workStart) + 20), night, visit: toMin(c.visitStart || '09:00') };
+}
+function planSuggestions(k) {
+  const tp = dayTypeFor(k), fr = weekday(k) === 5, mode = friModeFor(k), c = cfg(), out = [];
+  const A = (t, when, cat, x = {}) => out.push({ t, when, cat, ...x });
+  if (fr && tp === 'off') { A('تأكيد المكان والموعد مع الأهل والأصدقاء', 'night', 'family', { prev: 1 }); if (mode === 'am') A('تجهيز الغداء وتحميل الأغراض للخرجة', 'fix', 'family', { at: c.friPrep || '08:30' }); if (mode === 'pm') A('تجهيز الأغراض للخرجة بعد الغداء', 'fix', 'family', { at: '13:30' }); }
+  else if (tp === 'install') { A('تجهيز أدوات ومواد التركيب', 'night', 'work', { prev: 1 }); A('تأكيد موعد التركيب مع العميل', 'night', 'work', { prev: 1 }); }
+  if (weekday(k) === 5) A('إرسال رسالة جمعة مباركة للأهل والأصدقاء', 'night', 'family', { prev: 1 });
+  for (const s of dueSup().slice(0, 4)) A('متابعة ' + s.name, 'of', 'work', { phone: /\d{7,}/.test(s.contact || '') ? s.contact : '' });
+  for (const f of dueFamily().slice(0, 4)) A('اتصل بـ ' + f.name, 'night', 'family', { phone: f.phone || '', contact: f.name, fam: f.id });
+  return out;
+}
+const PLAN = { k: '', items: [] };
+function openPlan(which) {
+  const k = which === 'today' ? TODAY() : addDays(TODAY(), 1), sl = slotTimes(k), cnt = {}, items = [], idx = dayOfYear(k) % SHOPDEV.length;
+  const push = (g, t, when, cat, x = {}) => { if (x.prev && which !== 'today') { const n0 = NOW(), sl0 = slotTimes(TODAY()), tm0 = Math.max(sl0.night, n0.min + 30); items.push({ g, t, cat, ...x, date: TODAY(), time: hhmm(Math.min(1400, tm0)) }); return; } const base = when === 'fix' ? toMin(x.at) : sl[when]; const n = cnt[when] = (cnt[when] ?? -1) + 1; const tm = when === 'visit' || when === 'fix' ? base : Math.min(1380, base + n * 35); items.push({ g, t, cat, ...x, time: hhmm(tm) }); };
+  for (const s of planSuggestions(k)) push('مقترح لك', s.t, s.when, s.cat, s);
+  for (const [g, t, w, c] of PLAN_ITEMS) push(g, t === 'SHOPDEV' ? 'تطوير المحل: ' + SHOPDEV[idx] : t, w, c);
+  push('الشغل والموردون', 'إدخال الحسابات (تطبيق الحسابات)', 'fix', 'work', { at: cfg().accountsAt || '20:30', appKind: 'work' });
+  PLAN.k = k; PLAN.items = items;
+  const had = it => ST.tasks.some(x => x.tag === `pl|${it.date || k}|${it.t}`);
+  let last = '', html = '';
+  items.forEach((it, i) => { if (it.g !== last) { html += `<div class="pg">${it.g}</div>`; last = it.g; } html += `<div class="pi"><label><input type="checkbox" class="pk" data-i="${i}" ${had(it) ? 'checked disabled' : ''}><span>${esc(it.t)}</span></label><input type="time" class="pt" data-i="${i}" value="${it.time}"></div>`; });
+  openSheet(`<h2 class="h2">مهام ${which === 'today' ? 'اليوم' : 'الغد'} · ${typeLabel(k)}</h2><div class="small muted">اختر ما تريد تنفيذه وعدّل الوقت إن شئت. الأوقات مرتّبة حسب صلواتك ودوامك.</div>
+  <div style="margin-top:8px">${fld('التنبيه قبل الموعد', `<select id="pl-rem">${REMS.map(([v, l]) => `<option value="${v}" ${(cfg().defRemind ?? 10) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}</div>
+  ${html}<div class="pg">مهمة أخرى</div><div class="addbar"><input id="pl-own" type="text" placeholder="اكتب مهمة بكلامك (مثال: تواصل مع فواز)">${micBtn('pl-own')}</div>
+  <div class="row wrap" style="margin-top:12px"><button class="btn grow" data-act="plansave">إضافة المحدد</button><button class="btn ghost grow" data-act="plansave" data-x="1">إضافة + تنبيهاتها في تقويم الجوال</button></div>`);
+}
+function buildIcs(list) {
+  const ev = list.map(t => { const [st, en] = taskTimes(t), tt = t.title.replace(/[\r\n,;]/g, ' '); return ['BEGIN:VEVENT', `UID:${t.id}@asad`, `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)}Z`, `DTSTART:${st}`, `DTEND:${en}`, `SUMMARY:${tt}`, 'BEGIN:VALARM', 'TRIGGER:-PT10M', 'ACTION:DISPLAY', `DESCRIPTION:بعد ١٠ دقائق: ${tt}`, 'END:VALARM', 'BEGIN:VALARM', 'TRIGGER:-PT0M', 'ACTION:DISPLAY', `DESCRIPTION:${tt}`, 'END:VALARM', 'END:VEVENT'].join('\r\n'); });
+  return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//asad//AR', ...ev, 'END:VCALENDAR'].join('\r\n');
+}
+function exportIcs(days) {
+  const list = ST.tasks.filter(t => !t.done && t.time && days.includes(t.date));
+  if (!list.length) return say('لا مهام لها وقت في هذه الأيام', 'warn');
+  say(dlText('asad-tasks.ics', buildIcs(list), 'text/calendar') ? `تم تنزيل ${list.length} تنبيه، افتح الملف من التنزيلات ليُضاف لتقويم الجوال` : 'تعذّر التنزيل هنا', 'ok');
+}
+function openReview() {
+  const k = TODAY(), left = ST.tasks.filter(t => t.date === k && !t.done);
+  const Q = ['عميل مرّ اليوم ولم أتواصل معه', 'عرض سعر لم يُجهَّز بعد', 'شغل عميل لم يُجهَّز بعد', 'حسابات اليوم لم تُدخل بعد'];
+  openSheet(`<h2 class="h2">مراجعة اليوم</h2><div class="small muted">علّم على ما بقي عليك، وسأضيفه إلى الغد في وقته المناسب.</div>
+  <div class="pg">أسئلة سريعة</div>${Q.map((q, i) => `<div class="pi"><label><input type="checkbox" class="rq" data-i="${i}"><span>${q}</span></label></div>`).join('')}
+  ${left.length ? `<div class="pg">مهام اليوم غير المنجزة (نقل للغد)</div>${left.map(t => `<div class="pi"><label><input type="checkbox" class="rt" data-id="${t.id}"><span>${esc(t.title)}</span></label></div>`).join('')}` : ''}
+  <div class="row wrap" style="margin-top:12px"><button class="btn grow" data-act="reviewsave">أضف للغد ثم اختر مهام الغد</button><button class="btn ghost grow" data-act="planopen" data-d="tomorrow">تخطّي، اختر مهام الغد</button></div>`);
+}
 const hasPicker = () => !!(navigator.contacts && navigator.contacts.select);
 const alarmLink = t => { const [h, m] = (t.time || '00:00').split(':').map(Number); return `intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR=${h};i.android.intent.extra.alarm.MINUTES=${m};S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent(t.title)};end`; };
 function notifCard() {
@@ -949,7 +1044,7 @@ function notifCard() {
 function openTaskAct(id) {
   const t = ST.tasks.find(x => x.id === id); if (!t) return; const w = waNum(t.phone);
   openSheet(`<h2 class="h2">${esc(t.title)}</h2><div class="small muted">${esc(t.contact || '')}${t.phone ? ' · ' + esc(t.phone) : (t.contact ? ' · لا يوجد رقم، أضفه من «تعديل»' : '')}</div>
-  <div class="row wrap" style="margin-top:12px">${w ? `<button class="btn grow" data-act="twa" data-id="${id}">واتساب</button><button class="btn grow ghost" data-act="tcall" data-id="${id}">اتصال</button>` : ''}</div>
+  <div class="row wrap" style="margin-top:12px">${t.appKind ? `<button class="btn grow" data-act="tapp" data-id="${id}">فتح التطبيق</button>` : ''}${w ? `<button class="btn grow" data-act="twa" data-id="${id}">واتساب</button><button class="btn grow ghost" data-act="tcall" data-id="${id}">اتصال</button>` : ''}</div>
   <div class="row wrap" style="margin-top:8px">${t.time ? `<button class="btn ghost grow" data-act="extal" data-id="${id}">تنبيه خارجي</button>` : ''}<button class="btn ghost grow" data-act="tdone2" data-id="${id}">تم</button><button class="btn ghost grow" data-act="tedit" data-id="${id}">تعديل</button></div>`);
 }
 const FMSG = {
@@ -981,7 +1076,7 @@ function vToday() {
   }).join('');
   const todayTasks = ST.tasks.filter(t => !t.done && t.date && t.date <= k).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
   const tripCard = planCard(k, n);
-  const df = dueFamily(), ds = dueSup();
+  const df = [], ds = [];
   const due = [...df.map(f => `<div class="task"><span class="dot" style="--cc:var(--c-family)"></span><div class="grow"><div class="tt">اتصل بـ ${esc(f.name)}</div><div class="meta">${f.last ? 'آخر تواصل ' + relDate(f.last, k) : 'لم تتواصل بعد'}</div></div><button class="btn sm ghost" data-act="fammsg" data-id="${f.id}">رسالة</button><button class="btn sm" data-act="famdone" data-id="${f.id}">تم</button></div>`),
     ...ds.map(s => `<div class="task"><span class="dot" style="--cc:var(--c-work)"></span><div class="grow"><div class="tt">متابعة ${esc(s.name)}</div><div class="meta">${esc(s.status)}${s.product ? ' · ' + esc(s.product) : ''}</div></div><button class="btn sm" data-act="supopen" data-id="${s.id}">فتح</button></div>`)];
   const sk = SKILLS[dayOfYear(k) % SKILLS.length], learned = !!ST.skillLog[k];
@@ -994,6 +1089,7 @@ function vToday() {
   ${segBtns(weekday(k) === 5 ? FRI_TYPES : TYPES, dt, 'daytype')}
   ${weekday(k) === 5 && dt === 'off' ? segBtns(FMODES, friModeFor(k), 'fmode') : ''}
   ${notifCard()}
+  <div class="row wrap"><button class="btn ghost grow" data-act="planopen" data-d="today">${ic('plus')} مهام اليوم</button><button class="btn ghost grow" data-act="reviewopen">${ic('check')} مراجعة اليوم</button></div>
   ${tripCard}
   <section class="card"><h2>${ic('day')}<span>برنامج اليوم</span></h2><div class="tl">${rows}</div><div class="note" style="margin-top:8px">أوقات الصلوات محسوبة (أم القرى) وتتحرك معها بقية الفقرات. عدّل الأوقات الثابتة من الإعدادات.</div></section>
   ${sec('مهام اليوم', 'tasks', todayTasks.length ? `<div class="gap">${todayTasks.map(t => taskRow(t, k)).join('')}</div>` : empty('tasks', 'لا توجد مهام لليوم', 'اضغط «المهام» وأضف بالكتابة أو الصوت'), `<button class="btn sm ghost" data-act="goto" data-v="tasks">إضافة</button>`)}
@@ -1018,15 +1114,16 @@ function vTasks() {
     <div class="small muted">التطبيق يفهم: بكرة، بعد بكرة، أيام الأسبوع، الساعة، بعد العصر، كل يوم.</div></section>
   <div class="chips">${[['today', 'اليوم'], ['up', 'القادمة'], ['none', 'بلا موعد'], ['done', 'المنجزة']].map(([v, l]) => `<button class="chip ${taskF === v ? 'on' : ''}" data-act="tf" data-v="${v}">${l}<small>${F[v].length}</small></button>`).join('')}</div>
   <div class="gap">${list.length ? list.map(x => taskRow(x, t)).join('') : empty('tasks', 'لا توجد مهام هنا')}</div>
-  <button class="btn ghost block" data-act="tedit" data-id="">${ic('plus')} مهمة بتفاصيل كاملة</button>`;
+  <button class="btn ghost block" data-act="tedit" data-id="">${ic('plus')} مهمة بتفاصيل كاملة</button>
+  <button class="btn ghost block" data-act="icsday">${ic('bell')} نقل تنبيهات اليوم والغد لتقويم الجوال</button>`;
 }
 function openTask(id) {
-  const t = id ? ST.tasks.find(x => x.id === id) : { title: '', date: TODAY(), time: '', cat: 'general', remind: 0, repeat: 'none', sound: '', notes: '' };
+  const t = id ? ST.tasks.find(x => x.id === id) : { title: '', date: TODAY(), time: '', cat: 'general', remind: cfg().defRemind ?? 10, repeat: 'none', sound: '', notes: '' };
   openSheet(`<h2 class="h2">${id ? 'تعديل المهمة' : 'مهمة جديدة'}</h2>
   ${fld('العنوان', `<div class="addbar"><input id="tk-title" type="text" value="${esc(t.title)}">${micBtn('tk-title')}</div>`)}
   <div class="grid2">${fld('التاريخ', `<input id="tk-date" type="date" value="${t.date || ''}">`)}${fld('الوقت', `<input id="tk-time" type="time" value="${t.time || ''}">`)}</div>
   <div class="grid2">${fld('التصنيف', `<select id="tk-cat">${['general', 'work', 'family', 'faith', 'growth'].map(c => `<option value="${c}" ${t.cat === c ? 'selected' : ''}>${CATN[c]}</option>`).join('')}</select>`)}
-  ${fld('التذكير', `<select id="tk-rem">${[[-1, 'بدون'], [0, 'عند الوقت'], [5, 'قبل ٥ دقائق'], [10, 'قبل ١٠ دقائق'], [30, 'قبل ٣٠ دقيقة'], [60, 'قبل ساعة']].map(([v, l]) => `<option value="${v}" ${(t.remind ?? 0) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}</div>
+  ${fld('التذكير', `<select id="tk-rem">${REMS.map(([v, l]) => `<option value="${v}" ${(t.remind ?? 0) === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}</div>
   <div class="grid2">${fld('التكرار', `<select id="tk-rep">${[['none', 'بدون'], ['daily', 'يومياً'], ['weekly', 'أسبوعياً']].map(([v, l]) => `<option value="${v}" ${(t.repeat || 'none') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
   ${fld('صوت التنبيه', `<select id="tk-snd"><option value="">الافتراضي</option>${soundOptions(t.sound)}</select>`)}</div>
   <div class="grid2">${fld('التواصل مع (اسم)', `<input id="tk-con" type="text" value="${esc(t.contact || '')}">`)}${fld('الرقم (واتساب/اتصال)', `<input id="tk-ph" type="tel" inputmode="tel" value="${esc(t.phone || '')}" placeholder="05xxxxxxxx">`)}</div>
@@ -1063,7 +1160,7 @@ function vPrayer() {
 
 /* ---- الورد ---- */
 function vWird() {
-  const w = ST.wird, p = wirdPortion(w.pos, w.pace), k = TODAY(), done = !!(ST.done[k] || {}).wird, key = `${w.pos}|${w.pace}`;
+  const w = ST.wird, p = wirdPortion(w.pos, w.pace), k = TODAY(), done = !!(ST.done[k] || {}).wird, key = `${w.pos}|${w.pace}|${w.mark || ''}`;
   const tf = w.tafsir[key], units = Array.from({ length: 60 }, (_, u) => [u, `الجزء ${Math.floor(u / 2) + 1} — ${u % 2 ? 'النصف الثاني' : 'النصف الأول'}`]);
   const days = p.finished || !w.pace ? 0 : Math.ceil((60 - w.pos) / w.pace);
   return `
@@ -1071,7 +1168,7 @@ function vWird() {
     ${p.finished ? `<div class="portion"><b>ما شاء الله، أتممت الختمة</b><span class="small">ابدأ ختمة جديدة متى شئت.</span></div><button class="btn block" data-act="wnew">ابدأ ختمة جديدة</button>` : `
     <div class="portion"><b>${p.flex ? 'ما تيسّر اليوم' : p.label}</b><span>${p.flex ? 'ابدأ من ' : 'من '}${p.startTxt}</span><span>${p.flex ? 'واقرأ كما استطعت، وإن أكملت حتى ' + p.endTxt + ' فانتقل للتالي' : 'إلى ' + p.endTxt}</span></div>
     <div class="bar"><i style="width:${Math.round(w.pos * 100 / 60)}%"></i></div><div class="small muted">أنجزت ${Math.floor(w.pos / 2)} جزءاً${w.pos % 2 ? ' ونصفاً' : ''} من ٣٠ ${days ? ' · المتبقي نحو ' + days + ' يوماً بهذا الورد' : ''}</div>
-    <div class="row wrap"><button class="btn grow" data-act="wirddone">${ic('check')} ${done ? 'تم ورد اليوم (إلغاء)' : 'تم ورد اليوم'}</button><a class="btn ghost" style="text-decoration:none" target="_blank" rel="noopener" href="https://quran.com/juz/${p.j1}">${ic('link')} المصحف</a>${p.flex ? `<button class="btn ghost" data-act="wadv">أتممت هذا النصف، التالي</button>` : ''}</div>`}
+    <div class="row wrap"><button class="btn grow" data-act="wirddone">${ic('check')} ${done ? 'تم ورد اليوم (إلغاء)' : 'تم ورد اليوم'}</button><a class="btn ghost" style="text-decoration:none" target="_blank" rel="noopener" href="https://quran.com/juz/${p.j1}">${ic('link')} المصحف</a>${p.flex ? `<button class="btn ghost" data-act="wadv">أتممت هذا النصف، التالي</button>` : ''}<button class="btn ghost" data-act="lkkind" data-v="quran">${ic('book')} تطبيق القرآن</button></div>${p.flex ? `<div class="small muted">كم قرأت اليوم؟ (أي مقدار يكفي)</div><div class="chips">${['آيات قليلة', 'نصف صفحة', 'صفحة', 'صفحتان', 'سورة قصيرة', 'أكثر من ذلك'].map(a => `<button class="chip ${(w.log || {})[k] === a ? 'on' : ''}" data-act="wlog" data-v="${a}">${a}</button>`).join('')}</div>${fld('وقفت عند (للتفسير والمتابعة)', inp('wird.mark', 'text', 'placeholder="مثال: سورة الملك، الآية ١٠"'))}` : ''}`}
     ${fld('مقدار الورد اليومي', `<div class="seg">${[[0, 'ما تيسّر'], [1, 'نصف جزء'], [2, 'جزء'], [4, 'جزآن']].map(([v, l]) => `<button class="${w.pace === v ? 'on' : ''}" data-act="wpace" data-v="${v}">${l}</button>`).join('')}</div>`)}
     ${fld('أنا الآن عند', `<select data-bind="wird.pos" data-num="1">${units.map(([u, l]) => `<option value="${u}" ${w.pos === u ? 'selected' : ''}>${l}</option>`).join('')}<option value="60" ${w.pos >= 60 ? 'selected' : ''}>أتممت الختمة</option></select>`)}</section>
   ${p.finished ? '' : `<section class="card gap"><h2>${ic('ai')}<span>تفسير ميسّر لورد اليوم</span></h2>
@@ -1217,7 +1314,7 @@ function vSettings() {
     ${fld('اسمك (يظهر في رسائل المصانع)', inp('settings.name'))}
     ${fld('جدول الموسم', selb('settings.season', [['auto', 'تلقائي (أبريل–سبتمبر صيف)'], ['summer', 'صيفي دائماً'], ['winter', 'شتوي دائماً']]))}
     ${fld('جمع الشهر (إجازة ودوام)', selb('settings.fridayRule', [['odd_off', 'الأولى والثالثة إجازة، والثانية والرابعة دوام'], ['even_off', 'الثانية والرابعة إجازة، والأولى والثالثة دوام'], ['manual', 'أحدّدها بنفسي كل جمعة']]))}
-    ${fld('طبيعة الصباح الافتراضية', selb('settings.defaultDay', [['free', 'صباح فاضي'], ['install', 'فيه تركيبات'], ['visit', 'زيارة عميل'], ['off', 'إجازة']]))}
+    ${fld('طبيعة الصباح الافتراضية', selb('settings.defaultDay', [['free', 'صباح فاضي'], ['install', 'فيه تركيبات'], ['off', 'إجازة']]))}
     ${fld('المظهر', selb('settings.theme', [['auto', 'حسب الجهاز'], ['light', 'فاتح'], ['dark', 'داكن']]))}
     ${fld('مساحة آمنة أسفل الشاشة (لشريط المنصة أو شارتها)', selb('settings.bottomSpace', [['auto', 'تلقائي'], ['0', 'بدون'], ['32', 'صغيرة'], ['48', 'متوسطة'], ['64', 'كبيرة'], ['88', 'كبيرة جداً']]))}</section>
   <section class="card gap"><h2>${ic('bell')}<span>الاستيقاظ</span></h2><div class="grid2">${fld('الصيف', inp('settings.wake.summer', 'time'))}${fld('الشتاء', inp('settings.wake.winter', 'time'))}</div></section>
@@ -1229,7 +1326,10 @@ function vSettings() {
   <section class="card gap"><h2>${ic('day')}<span>أيام التركيبات وخرجات الجمعة</span></h2>
     <div class="grid2">${fld('انتهاء التركيبات (تقريباً)', inp('settings.installEnd', 'time'))}${fld('الانطلاق من المعرض للبيت', inp('settings.showroomLeave', 'time'))}</div>
     <div class="grid2">${fld('بداية زيارة العميل', inp('settings.visitStart', 'time'))}${fld('نهاية الزيارة (١٢:٠٠ أو ١١:٣٠)', inp('settings.visitEnd', 'time'))}</div>
-    ${fld('التواصل مع الأهل والأصدقاء (بعد العشاء، ويضاف ليلة الجمعة والجمعة دائماً)', selb('settings.familyEvery', [[1, 'كل يوم'], [2, 'كل يومين'], [3, 'كل ٣ أيام']], true))}
+    ${fld('وقت مراجعة اليوم وتحديد مهام الغد', inp('settings.planAt', 'time'))}
+    ${fld('وقت دخول تطبيق الحسابات (مقترح)', inp('settings.accountsAt', 'time'))}
+    ${fld('تنبيه المهام الجديدة افتراضياً', selb('settings.defRemind', REMS, true))}
+    ${fld('إنهاء الإملاء الصوتي بعد صمت', selb('settings.voiceSilence', [[3, '٣ ثوانٍ'], [5, '٥ ثوانٍ'], [7, '٧ ثوانٍ'], [10, '١٠ ثوانٍ'], [15, '١٥ ثانية'], [0, 'يدوياً: أضغط إنهاء']], true))}
     ${fld('مدة الطريق من المعرض (دقيقة)', inp('settings.homeDrive', 'number'))}
     ${tog('settings.pickOnInstall', 'إحضار الولد من المدرسة في أيام التركيبات')}
     ${fld('نوع جمعة الإجازة الافتراضي', selb('settings.friOffDefault', FMODES))}
@@ -1275,7 +1375,7 @@ function go(t) { tab = t; closeSheet(); render(); $('#main').scrollTop = 0; }
 
 /* ---- الأحداث ---- */
 const ACT = {
-  goto: el => { if (el.dataset.v === 'links') { openLinks(); return; } if (el.dataset.v === 'famsg') { openFamMsg('', 'jum'); return; } const v = el.dataset.v, M = { growth: ['grow', 'skills'], suppliers: ['grow', 'sup'], family: ['grow', 'fam'] }; if (M[v]) { tab = M[v][0]; growT = M[v][1]; closeSheet(); render(); $('#main').scrollTop = 0; } else go(v); },
+  goto: el => { if (el.dataset.v === 'plan') { openReview(); return; } if (/^links/.test(el.dataset.v)) { const kd = el.dataset.v.split(':')[1]; kd ? launchKind(kd) : openLinks(); return; } if (el.dataset.v === 'famsg') { openFamMsg('', 'jum'); return; } const v = el.dataset.v, M = { growth: ['grow', 'skills'], suppliers: ['grow', 'sup'], family: ['grow', 'fam'] }; if (M[v]) { tab = M[v][0]; growT = M[v][1]; closeSheet(); render(); $('#main').scrollTop = 0; } else go(v); },
   fmode: el => { ST.dayOpt[TODAY()] = el.dataset.v; save(); render(); },
   tmtype: el => { ST.dayType[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
   tmmode: el => { ST.dayOpt[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
@@ -1296,6 +1396,7 @@ const ACT = {
   testblock: () => fire({ id: 'tb' + Date.now(), title: 'تنبيه فقرة من البرنامج', body: 'هذا صوت الفقرات الروتينية', sound: cfg().sounds.block, loop: false }),
   pickcon: async el => { try { const r = await navigator.contacts.select(['name', 'tel'], { multiple: false }); if (r && r[0]) { const n = $('#' + el.dataset.n), p = $('#' + el.dataset.p); if (n && !n.value) n.value = (r[0].name || [])[0] || ''; if (p) p.value = (r[0].tel || [])[0] || ''; } } catch (e) { say('اختيار جهات الاتصال غير مدعوم هنا، اكتب الرقم يدوياً', 'warn'); } },
   tact: el => openTaskAct(el.dataset.id),
+  tapp: el => { const t = ST.tasks.find(x => x.id === el.dataset.id); if (t) launchKind(t.appKind); },
   twa: el => { const t = ST.tasks.find(x => x.id === el.dataset.id); if (t) openWA(t.phone); },
   tcall: el => { const t = ST.tasks.find(x => x.id === el.dataset.id); if (t) openTel(t.phone); },
   tdone2: el => { toggleTask(el.dataset.id, true); closeSheet(); render(); },
@@ -1309,8 +1410,29 @@ const ACT = {
     say(dlText('asad-task.ics', ics, 'text/calendar') ? 'تم تنزيل الملف، افتحه من التنزيلات' : 'تعذّر التنزيل هنا، استخدم رابط تقويم قوقل', 'ok'); },
   lkopen: () => openLinks(),
   lkdel: el => { ST.links = (ST.links || []).filter(x => x.id !== el.dataset.id); save(); openLinks(); render(); },
-  lkadd: () => { const name = $('#lk-name').value.trim(); let url = $('#lk-url').value.trim(); if (!name || !url) return say('اكتب الاسم والرابط', 'warn'); if (!/^(https?:|intent:|market:)/i.test(url)) url = 'https://' + url; (ST.links = ST.links || []).push({ id: uid(), name, url, kind: $('#lk-kind').value }); save(); openLinks(); render(); },
+  lkadd: () => { const name = $('#lk-name').value.trim(); let url = $('#lk-url').value.trim(); const pkg = $('#lk-pkg').value.trim(); if (!name || (!url && !pkg)) return say('اكتب الاسم والرابط أو اسم الحزمة', 'warn'); if (url && !/^(https?:|intent:|market:)/i.test(url)) url = 'https://' + url; const kind = $('#lk-kind').value; (ST.links = ST.links || []).push({ id: uid(), name, url, pkg, kind }); save(); openLinks(kind); render(); },
+  lkgo: el => { const l = (ST.links || []).find(x => x.id === el.dataset.id); if (l) launchLink(l); },
+  lkkind: el => launchKind(el.dataset.v),
+  wlog: el => { const k = TODAY(), w = ST.wird; w.log = w.log || {}; w.log[k] = el.dataset.v; (ST.done[k] = ST.done[k] || {}).wird = true; for (const x of Object.keys(w.log)) if (diffDays(x, k) > 30) delete w.log[x]; save(); render(); say('بارك الله فيك'); },
   wadv: () => { ST.wird.pos = Math.min(60, ST.wird.pos + 1); save(); render(); },
+  reviewopen: () => openReview(),
+  reviewsave: () => {
+    const tm = addDays(TODAY(), 1), sl = slotTimes(tm), T = [['تواصل مع العميل الذي مرّ أمس', 'of', 'work', ''], ['تجهيز عرض سعر للعميل', 'of', 'work', ''], ['تجهيز شغل العميل', 'of', 'work', ''], ['إدخال حسابات اليوم (تطبيق الحسابات)', 'fix', 'work', 'work']]; let n = 0, i2 = 0;
+    document.querySelectorAll('.sheet .rq:checked').forEach(cb => { const [t, w, c, ak] = T[+cb.dataset.i], tag = `pl|${tm}|${t}`; if (ST.tasks.some(x => x.tag === tag)) return; const base = w === 'fix' ? toMin(cfg().accountsAt || '20:30') : sl.of + (i2++) * 35; ST.tasks.push({ id: uid(), tag, title: t, date: tm, time: hhmm(Math.min(1380, base)), cat: c, repeat: 'none', remind: cfg().defRemind ?? 10, done: false, contact: '', phone: '', appKind: ak }); n++; });
+    document.querySelectorAll('.sheet .rt:checked').forEach(cb => { const t = ST.tasks.find(x => x.id === cb.dataset.id); if (t) { t.date = tm; n++; } });
+    save(); render(); say(n ? `أُضيف ${n} للغد` : 'لا شيء للإضافة'); openPlan('tomorrow');
+  },
+  planopen: el => openPlan(el.dataset.d),
+  plansave: el => {
+    const k = PLAN.k, add = [];
+    document.querySelectorAll('.sheet .pk:checked:not(:disabled)').forEach(cb => { const i = +cb.dataset.i, it = PLAN.items[i], tm = document.querySelector(`.sheet .pt[data-i="${i}"]`).value || it.time; add.push({ it, tm }); });
+    for (const { it, tm } of add) { const t = { id: uid(), tag: `pl|${it.date || k}|${it.t}`, title: it.t, date: it.date || k, time: tm, cat: it.cat, repeat: 'none', remind: +$('#pl-rem').value, done: false, contact: it.contact || '', phone: it.phone || '', appKind: it.appKind || '' }; if (!t.contact && !t.phone) linkContact(t); ST.tasks.push(t); if (it.fam) { const f = ST.family.find(x => x.id === it.fam); if (f) f.last = TODAY(); } }
+    const own = $('#pl-own').value.trim(); let n = add.length;
+    if (own) { const p = parseTask(own, NOW(), kk => prayersFor(kk, cfg())); if (!p.date) p.date = k; const mt = mkTask(p); mt.remind = +$('#pl-rem').value; ST.tasks.push(mt); n++; }
+    save(); closeSheet(); render(); say(n ? `أُضيفت ${n} مهام` : 'لم تحدد مهاماً');
+    if (el.dataset.x && n) setTimeout(() => exportIcs([k]), 300);
+  },
+  icsday: () => exportIcs([TODAY(), addDays(TODAY(), 1)]),
   tripask: () => { go('ai'); sendChat('اقترح لي ٥ أفكار لرحلة عائلية بعد العصر يوم الجمعة مع الأهل والأصدقاء قرب ' + cityName() + '، مع نصائح تجهيز سريعة.'); },
   tripmsg: async () => { const t = 'السلام عليكم ورحمة الله، نقترح لقاءً ورحلة بسيطة يوم الجمعة بعد العصر إن شاء الله. ما رأيكم بالمكان والموعد؟'; try { await navigator.clipboard.writeText(t); say('تم نسخ رسالة الدعوة'); } catch (e) { showToast({ title: 'انسخ الرسالة', body: t, ttl: 12000 }); } }, gosettings: () => go(tab === 'settings' ? 'today' : 'settings'),
   blk: el => toggleBlock(el.dataset.k, el.dataset.v),
@@ -1346,8 +1468,8 @@ const ACT = {
     const w = ST.wird, p = wirdPortion(w.pos, w.pace); if (p.finished) return; el.disabled = true; const out = $('#tafout'); out.innerHTML = '<div class="muted small">جارٍ تحضير التفسير…</div>';
     const sys = 'أنت معلّم يشرح معاني القرآن الكريم لمسلم عادي بلغة عربية فصحى مبسطة. اعتمد على أقوال المفسرين المعتبرين (السعدي، ابن كثير، الطبري، الميسّر). لا تنقل الآيات كاملة. لخّص المعاني في ٥ إلى ٨ نقاط مرتبة حسب السور والآيات مع ذكر أرقام الآيات التقريبية، ثم اختم بفائدة عملية واحدة للتطبيق اليوم. إن لم تتأكد من معنى فاذكر ذلك ولا تختلق تفسيراً.';
     try {
-      const text = await askAI([{ role: 'user', content: `ورد اليوم: ${p.label}، من ${p.startTxt} إلى ${p.endTxt}. اكتب التفسير الميسّر.` }], sys, { max: 1800, onText: t => { out.innerHTML = md(t); } });
-      w.tafsir[`${w.pos}|${w.pace}`] = text; const ks = Object.keys(w.tafsir); if (ks.length > 6) delete w.tafsir[ks[0]]; save();
+      const text = await askAI([{ role: 'user', content: `${p.flex ? 'قرأت اليوم: ' + (w.mark ? 'حتى ' + w.mark + ' (بدءاً من ' + p.startTxt + ')' : 'ما تيسّر بدءاً من ' + p.startTxt) : 'ورد اليوم: ' + p.label + '، من ' + p.startTxt + ' إلى ' + p.endTxt}. اكتب التفسير الميسّر.` }], sys, { max: 1800, onText: t => { out.innerHTML = md(t); } });
+      w.tafsir[`${w.pos}|${w.pace}|${w.mark || ''}`] = text; const ks = Object.keys(w.tafsir); if (ks.length > 6) delete w.tafsir[ks[0]]; save();
     } catch (e) { out.innerHTML = `<div class="note">${esc(errMsg(e))}</div>`; }
     el.disabled = false;
   },
