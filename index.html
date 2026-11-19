@@ -310,7 +310,7 @@ const DEFAULT_SETTINGS = {
   pick: { summer: '12:15', winter: '12:45' },
   driveMin: 15,
   lunch: '14:30', leave: '15:00', workStart: '16:00', workEnd: '22:00', sleep: '22:45',
-  planAt: '21:30', voiceSilence: 7, defRemind: 10, accountsAt: '20:30', soundSource: 'app', installEnd: '16:00', visitStart: '09:00', visitEnd: '12:00', showroomLeave: '20:00', homeDrive: 15, pickOnInstall: false, friOffDefault: 'pm', friTripTime: '15:00', friOut: '09:30', friPrep: '08:30',
+  planAt: '21:30', voiceSilence: 7, waApp: 'auto', waPkg: '', defRemind: 10, accountsAt: '20:30', soundSource: 'app', installEnd: '16:00', visitStart: '09:00', visitEnd: '12:00', showroomLeave: '20:00', homeDrive: 15, pickOnInstall: false, friOffDefault: 'pm', friTripTime: '15:00', friOut: '09:30', friPrep: '08:30',
   alerts: { prayer: true, wake: true, pick: true, work: true, wird: true, plan: true, pre: 10 },
   sounds: { fajr: 'bell', dhuhr: 'bell', asr: 'bell', maghrib: 'bell', isha: 'bell', task: 'urgent', block: 'soft' }
 };
@@ -549,12 +549,12 @@ function deepMerge(b, o) {
   const r = { ...b }; for (const k in o) r[k] = k in b ? deepMerge(b[k], o[k]) : o[k]; return r;
 }
 
-const APP_VER = '13 · فتح التطبيقات الخارجية + ورد مفتوح + مراجعة اليوم + صوت أطول';
+const APP_VER = '14 · رسائل جماعية + قوائم الأهل + اختيار الواتساب';
 if("serviceWorker"in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
 const LS = 'asad.state.v1', LSAI = 'asad.ai.v1', LSSND = 'asad.sounds.v1', LSFIRED = 'asad.fired.v1';
 const DEF = {
   settings: { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), defaultDay: 'free', theme: 'auto', fridayRule: 'odd_off', bottomSpace: 'auto', name: '', prayerOn: { fajr: true, dhuhr: true, asr: true, maghrib: true, isha: true } },
-  done: {}, dayType: {}, dayOpt: {}, contacts: [], links: [{ id: 'l1', name: 'القرآن الكريم (quran.com)', url: 'https://quran.com/ar', kind: 'quran' }, { id: 'l2', name: 'التفسير (tafsir.app)', url: 'https://tafsir.app/', kind: 'tafsir' }, { id: 'l3', name: 'أذكار المسلم (حصن المسلم)', url: 'https://hisnmuslim.com/', kind: 'adhkar' }], tasks: [], wird: { pos: 0, pace: 0, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
+  done: {}, dayType: {}, dayOpt: {}, groups: ['الأهل', 'الأصدقاء', 'الأعمام والعمات', 'أبناء العمومة', 'أصحاب البلاد'], gmLast: {}, contacts: [], links: [{ id: 'l1', name: 'القرآن الكريم (quran.com)', url: 'https://quran.com/ar', kind: 'quran' }, { id: 'l2', name: 'التفسير (tafsir.app)', url: 'https://tafsir.app/', kind: 'tafsir' }, { id: 'l3', name: 'أذكار المسلم (حصن المسلم)', url: 'https://hisnmuslim.com/', kind: 'adhkar' }], tasks: [], wird: { pos: 0, pace: 0, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
 };
 DEF.settings.sounds.wake = 'long';
 let ST = deepMerge(JSON.parse(JSON.stringify(DEF)), rd(LS, {}));
@@ -655,7 +655,13 @@ function waNum(p) {
   if (d.startsWith('00')) d = d.slice(2); else if (d.startsWith('05') && d.length === 10) d = '966' + d.slice(1); else if (d.startsWith('5') && d.length === 9) d = '966' + d; else if (d.startsWith('0') && d.length >= 9) d = '966' + d.slice(1);
   return d.length >= 9 ? d : '';
 }
-const openWA = (p, text) => { const w = waNum(p); if (w) window.open('https://wa.me/' + w + (text ? '?text=' + encodeURIComponent(text) : ''), '_blank'); };
+function waLink(p, text) {
+  const w = waNum(p); if (!w) return null; const c = cfg(), app = c.waApp || 'auto', pkg = app === 'wa' ? 'com.whatsapp' : app === 'w4b' ? 'com.whatsapp.w4b' : app === 'custom' ? (c.waPkg || '').trim() : '';
+  const web = 'https://wa.me/' + w + (text ? '?text=' + encodeURIComponent(text) : '');
+  if (pkg && /android/i.test(navigator.userAgent)) return { intent: true, url: `intent://send?phone=${w}${text ? '&text=' + encodeURIComponent(text) : ''}#Intent;scheme=whatsapp;package=${pkg};S.browser_fallback_url=${encodeURIComponent(web)};end` };
+  return { url: web };
+}
+const openWA = (p, text) => { const l = waLink(p, text); if (!l) return; if (l.intent) location.href = l.url; else window.open(l.url, '_blank'); };
 const openTel = p => { const w = waNum(p); if (w) location.href = 'tel:+' + w; };
 function findContact(name) {
   const n = normAr(name || ''); if (!n) return null;
@@ -677,6 +683,7 @@ const mkTask = p => { linkContact(p); return { id: uid(), title: p.title, date: 
 function fire(a) {
   const acts = [];
   if (a.plan) acts.push({ label: 'مراجعة اليوم', fn: () => { stopRing(); openReview(); } });
+  if (a.act === 'gm') acts.push({ label: 'رسالة جماعية', fn: () => { stopRing(); openGM(); } });
   if (a.appKind) acts.push({ label: 'فتح التطبيق', fn: () => { stopRing(); launchKind(a.appKind); } });
   if (a.taskId) {
     if (a.phone && waNum(a.phone)) { acts.push({ label: 'واتساب', fn: () => { stopRing(); openWA(a.phone); } }); acts.push({ label: 'اتصال', fn: () => { stopRing(); openTel(a.phone); } }); }
@@ -700,7 +707,7 @@ function alertsFor(k) {
   for (const t of ST.tasks) {
     if (t.done || !t.time || t.remind == null || t.remind < 0) continue;
     const nxt = t.date === addDays(k, 1) && t.remind >= 720; if (t.date !== k && !nxt) continue;
-    const at = absMs(t.date, toMin(t.time), c.tz), base = { taskId: t.id, phone: t.phone || '', appKind: t.appKind || '' }, r = t.remind;
+    const at = absMs(t.date, toMin(t.time), c.tz), base = { taskId: t.id, phone: t.phone || '', appKind: t.appKind || '', act: t.act || '' }, r = t.remind;
     if (r > 0) out.push({ ...base, id: `${k}|t|${t.id}|${t.time}|pre${nxt ? 'n' : ''}`, at: at - r * 60000, title: `${r >= 1440 ? 'غداً ' + fmt12(toMin(t.time)) : r >= 60 ? 'بعد ' + Math.round(r / 60) + ' ساعة' : 'بعد ' + r + ' دقيقة'}: ${t.title}`, body: 'مهمة قادمة · ' + fmt12(toMin(t.time)), sound: 'soft', pre: true });
     if (t.date === k) out.push({ ...base, id: `${k}|t|${t.id}|${t.time}`, at, title: t.title, body: 'حان وقت المهمة · ' + fmt12(toMin(t.time)), sound: t.sound || c.sounds.task, win: 1800000, loop: true });
   }
@@ -926,7 +933,7 @@ function taskRow(t, today) {
   if (t.time) meta.push(fmt12(toMin(t.time)));
   if (t.repeat && t.repeat !== 'none') meta.push(t.repeat === 'daily' ? 'يومياً' : 'أسبوعياً');
   if (t.time && t.remind != null && t.remind >= 0) meta.push(ic('bell').replace('class="i ', 'style="width:14px;height:14px" class="i '));
-  return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div>${t.contact || t.phone || t.appKind ? `<button class="btn sm ghost" data-act="tact" data-id="${t.id}" aria-label="تواصل">${ic('phone')}</button>` : ''}</div>`;
+  return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div>${t.contact || t.phone || t.appKind || t.act ? `<button class="btn sm ghost" data-act="tact" data-id="${t.id}" aria-label="تواصل">${ic('phone')}</button>` : ''}</div>`;
 }
 
 const TYPES = [['install', 'تركيبات'], ['free', 'صباح فاضي'], ['off', 'إجازة']];
@@ -977,13 +984,43 @@ function openExtAlert(id) {
   <button class="btn ghost block" data-act="icsdl" data-id="${id}">${ic('copy')} ملف تقويم (.ics) يُفتح بتطبيق التقويم</button>
   <a class="btn ghost block" style="text-decoration:none" href="${alarmLink(t)}">${ic('bell')} منبّه الساعة (قد لا يعمل على بعض الأجهزة)</a></div>`);
 }
+let famG = 'all';
+const gName = g => g || 'غير مصنّف';
+const gmGroups = () => { const g = [...(ST.groups || [])]; if (ST.family.some(f => !f.group)) g.push(''); return g; };
+const WAOPTS = [['auto', 'تلقائي (يسألني أندرويد)'], ['wa', 'واتساب العادي'], ['w4b', 'واتساب بزنس'], ['custom', 'تطبيق آخر (اسم الحزمة)']];
+const GM = { q: [], i: 0, text: '', k: '', groups: [] };
+function openGM(kind) {
+  const day = weekday(TODAY()), k = FMSG[kind] ? kind : (day === 4 || day === 5 ? 'jum' : 'eve');
+  const gs = gmGroups().map(g => ({ g, n: ST.family.filter(f => (f.group || '') === g).length })).filter(x => x.n), kk = TODAY();
+  openSheet(`<h2 class="h2">رسالة جماعية</h2>
+  <div class="chips">${Object.entries(FMSG).map(([v, [l]]) => `<button class="chip ${k === v ? 'on' : ''}" data-act="gmkind" data-v="${v}">${l}</button>`).join('')}</div>
+  <textarea id="msgtxt" style="min-height:110px">${esc(GM.text && GM.k === k ? GM.text : FMSG[k][1])}</textarea>
+  <div class="small muted">اكتب {الاسم} ليُستبدل باسم كل شخص عند الإرسال واحداً واحداً.</div>
+  <div class="row wrap"><button class="btn ghost" data-act="copymsg">${ic('copy')} نسخ</button><button class="btn ghost" data-act="fmai" data-v="${k}" ${aiReady() ? '' : 'disabled'}>${ic('ai')} صياغة بالذكاء</button></div>
+  <div class="pg">أرسل إلى</div>${gs.length ? gs.map(x => `<div class="pi"><label><input type="checkbox" class="gmg" data-g="${esc(x.g)}" ${GM.groups.includes(x.g) ? 'checked' : ''}><span>${esc(gName(x.g))} (${x.n})</span></label><span class="small muted">${(ST.gmLast || {})[x.g] ? 'آخر مرة ' + relDate(ST.gmLast[x.g], kk) : ''}</span></div>`).join('') : '<div class="small muted">أضف أشخاصاً لقوائمك من تبويب التواصل أولاً.</div>'}
+  ${fld('الإرسال عبر', selb('settings.waApp', WAOPTS))}
+  <div class="gap" style="margin-top:8px"><button class="btn block" data-act="gmshare">${ic('copy')} مشاركة دفعة واحدة (تختار الجهات داخل واتساب)</button><button class="btn ghost block" data-act="gmstart">${ic('phone')} إرسال واحداً واحداً باسم كل شخص</button></div>`);
+}
+const gmSel = () => { const g = [...document.querySelectorAll('.sheet .gmg:checked')].map(x => x.dataset.g); GM.groups = g; GM.text = ($('#msgtxt') || {}).value || ''; return g; };
+function openGMQueue() {
+  const f = ST.family.find(x => x.id === GM.q[GM.i]);
+  if (!f) { GM.groups.forEach(g => { (ST.gmLast = ST.gmLast || {})[g] = TODAY(); }); save(); render(); openSheet(`<h2 class="h2">تم بحمد الله</h2><div>أُرسلت الرسالة إلى ${GM.i} من ${GM.q.length}. تقبّل الله منا ومنكم.</div><button class="btn block" style="margin-top:12px" data-act="gmclose">إغلاق</button>`); return; }
+  openSheet(`<h2 class="h2">إرسال واحداً واحداً (${GM.i + 1} من ${GM.q.length})</h2><div class="card"><b style="font-size:18px">${esc(f.name)}</b> <span class="small muted">${esc(gName(f.group || ''))}</span></div>
+  <div class="small muted" style="white-space:pre-wrap;margin:8px 0">${esc(GM.text.replace(/\{الاسم\}/g, f.name))}</div>
+  <div class="row wrap"><button class="btn grow" data-act="gmnext">فتح واتساب وإرسال</button><button class="btn ghost" data-act="gmskip">تخطّي</button></div>
+  <div class="small muted" style="margin-top:8px">بعد الإرسال ارجع إلى التطبيق فتجد الشخص التالي جاهزاً.</div>`);
+}
+function openGroups() {
+  openSheet(`<h2 class="h2">قوائمي</h2><div class="gap">${(ST.groups || []).map(g => `<div class="card"><div class="row"><b class="grow">${esc(g)} <span class="small muted">(${ST.family.filter(f => f.group === g).length})</span></b><button class="btn sm danger" data-act="grpdel" data-v="${esc(g)}">${ic('trash')}</button></div></div>`).join('')}</div>
+  ${fld('اسم قائمة جديدة', '<input id="grp-new" type="text" placeholder="مثال: زملاء العمل">')}<button class="btn block" data-act="grpadd">${ic('plus')} إضافة قائمة</button>`);
+}
 const PLAN_ITEMS = [
   ['الشغل والموردون', 'تواصل مع مصنع أو مورّد', 'of', 'work'], ['الشغل والموردون', 'طلب كتالوج وقائمة أسعار', 'of', 'work'], ['الشغل والموردون', 'طلب وكالة أو توزيع', 'of', 'work'], ['الشغل والموردون', 'تواصل مع مقاول', 'of', 'work'], ['الشغل والموردون', 'تواصل مع عميل جديد', 'of', 'work'], ['الشغل والموردون', 'متابعة عرض سعر لعميل', 'of', 'work'], ['الشغل والموردون', 'طلب خامات ومواد', 'of', 'work'],
   ['التسويق', 'وضع إعلان في السوشيال ميديا', 'of', 'work'], ['التسويق', 'تنزيل فيديو في السوشيال ميديا', 'of', 'work'], ['التسويق', 'تصوير منتج أو عمل منجز', 'am', 'work'], ['التسويق', 'الرد على استفسارات العملاء', 'of', 'work'],
   ['المحل', 'إضافة منتج جديد للمعرض', 'of', 'work'], ['المحل', 'ترتيب المعرض أو تغيير العرض', 'of', 'work'], ['المحل', 'SHOPDEV', 'of', 'work'],
   ['العملاء', 'زيارة عميل أو أخذ مقاسات', 'visit', 'work'],
   ['البيت', 'إصلاحات في البيت', 'am', 'general'], ['البيت', 'مشوار أو تسوق', 'am', 'general'],
-  ['الأهل والأصدقاء', 'اتصال بالأهل', 'night', 'family'], ['الأهل والأصدقاء', 'رسالة للأهل والأصدقاء (جمعة أو تحية)', 'night', 'family'], ['الأهل والأصدقاء', 'التواصل مع صديق', 'night', 'family'],
+  ['الأهل والأصدقاء', 'اتصال بالأهل', 'night', 'family'], ['الأهل والأصدقاء', 'رسالة جماعية للأهل والأصدقاء (جمعة أو تحية)', 'night', 'family', { act: 'gm' }], ['الأهل والأصدقاء', 'التواصل مع صديق', 'night', 'family'],
   ['التطوير', 'ساعة تعلّم: تركيب وتشطيب وديكور', 'night', 'growth'], ['التطوير', 'مشاهدة درس في التأثيث والتشطيب', 'night', 'growth']
 ];
 function slotTimes(k) {
@@ -997,7 +1034,7 @@ function planSuggestions(k) {
   const A = (t, when, cat, x = {}) => out.push({ t, when, cat, ...x });
   if (fr && tp === 'off') { A('تأكيد المكان والموعد مع الأهل والأصدقاء', 'night', 'family', { prev: 1 }); if (mode === 'am') A('تجهيز الغداء وتحميل الأغراض للخرجة', 'fix', 'family', { at: c.friPrep || '08:30' }); if (mode === 'pm') A('تجهيز الأغراض للخرجة بعد الغداء', 'fix', 'family', { at: '13:30' }); }
   else if (tp === 'install') { A('تجهيز أدوات ومواد التركيب', 'night', 'work', { prev: 1 }); A('تأكيد موعد التركيب مع العميل', 'night', 'work', { prev: 1 }); }
-  if (weekday(k) === 5) A('إرسال رسالة جمعة مباركة للأهل والأصدقاء', 'night', 'family', { prev: 1 });
+  if (weekday(k) === 5) A('إرسال رسالة جمعة مباركة للأهل والأصدقاء', 'night', 'family', { prev: 1, act: 'gm' });
   for (const s of dueSup().slice(0, 4)) A('متابعة ' + s.name, 'of', 'work', { phone: /\d{7,}/.test(s.contact || '') ? s.contact : '' });
   for (const f of dueFamily().slice(0, 4)) A('اتصل بـ ' + f.name, 'night', 'family', { phone: f.phone || '', contact: f.name, fam: f.id });
   return out;
@@ -1007,7 +1044,7 @@ function openPlan(which) {
   const k = which === 'today' ? TODAY() : addDays(TODAY(), 1), sl = slotTimes(k), cnt = {}, items = [], idx = dayOfYear(k) % SHOPDEV.length;
   const push = (g, t, when, cat, x = {}) => { if (x.prev && which !== 'today') { const n0 = NOW(), sl0 = slotTimes(TODAY()), tm0 = Math.max(sl0.night, n0.min + 30); items.push({ g, t, cat, ...x, date: TODAY(), time: hhmm(Math.min(1400, tm0)) }); return; } const base = when === 'fix' ? toMin(x.at) : sl[when]; const n = cnt[when] = (cnt[when] ?? -1) + 1; const tm = when === 'visit' || when === 'fix' ? base : Math.min(1380, base + n * 35); items.push({ g, t, cat, ...x, time: hhmm(tm) }); };
   for (const s of planSuggestions(k)) push('مقترح لك', s.t, s.when, s.cat, s);
-  for (const [g, t, w, c] of PLAN_ITEMS) push(g, t === 'SHOPDEV' ? 'تطوير المحل: ' + SHOPDEV[idx] : t, w, c);
+  for (const [g, t, w, c, x] of PLAN_ITEMS) push(g, t === 'SHOPDEV' ? 'تطوير المحل: ' + SHOPDEV[idx] : t, w, c, x || {});
   push('الشغل والموردون', 'إدخال الحسابات (تطبيق الحسابات)', 'fix', 'work', { at: cfg().accountsAt || '20:30', appKind: 'work' });
   PLAN.k = k; PLAN.items = items;
   const had = it => ST.tasks.some(x => x.tag === `pl|${it.date || k}|${it.t}`);
@@ -1044,10 +1081,14 @@ function notifCard() {
 function openTaskAct(id) {
   const t = ST.tasks.find(x => x.id === id); if (!t) return; const w = waNum(t.phone);
   openSheet(`<h2 class="h2">${esc(t.title)}</h2><div class="small muted">${esc(t.contact || '')}${t.phone ? ' · ' + esc(t.phone) : (t.contact ? ' · لا يوجد رقم، أضفه من «تعديل»' : '')}</div>
-  <div class="row wrap" style="margin-top:12px">${t.appKind ? `<button class="btn grow" data-act="tapp" data-id="${id}">فتح التطبيق</button>` : ''}${w ? `<button class="btn grow" data-act="twa" data-id="${id}">واتساب</button><button class="btn grow ghost" data-act="tcall" data-id="${id}">اتصال</button>` : ''}</div>
+  <div class="row wrap" style="margin-top:12px">${t.act === 'gm' ? `<button class="btn grow" data-act="gmopen">رسالة جماعية</button>` : ''}${t.appKind ? `<button class="btn grow" data-act="tapp" data-id="${id}">فتح التطبيق</button>` : ''}${w ? `<button class="btn grow" data-act="twa" data-id="${id}">واتساب</button><button class="btn grow ghost" data-act="tcall" data-id="${id}">اتصال</button>` : ''}</div>
   <div class="row wrap" style="margin-top:8px">${t.time ? `<button class="btn ghost grow" data-act="extal" data-id="${id}">تنبيه خارجي</button>` : ''}<button class="btn ghost grow" data-act="tdone2" data-id="${id}">تم</button><button class="btn ghost grow" data-act="tedit" data-id="${id}">تعديل</button></div>`);
 }
 const FMSG = {
+  eid: ['عيد مبارك', 'السلام عليكم ورحمة الله، عيد مبارك عليكم وعلى الأهل جميعاً، تقبّل الله منا ومنكم صالح الأعمال، وكل عام وأنتم بخير.'],
+  ram: ['رمضان', 'رمضان كريم، أعاده الله علينا وعليكم بالخير والبركات، وتقبّل الله صيامكم وقيامكم.'],
+  cond: ['تعزية', 'عظّم الله أجركم وأحسن عزاءكم وغفر لفقيدكم وأسكنه فسيح جناته، وإنا لله وإنا إليه راجعون.'],
+  thx: ['شكر ودعاء', 'جزاكم الله خيراً على سؤالكم وطيب أخلاقكم، وجعل الله ما قدمتموه في موازين حسناتكم.'],
   jum: ['جمعة مباركة', 'السلام عليكم ورحمة الله وبركاته\nجمعة مباركة عليكم وعلى الأهل جميعاً، تقبّل الله منا ومنكم صالح الأعمال، ولا تنسونا من دعائكم 🤲'],
   eve: ['مساء الخير', 'مساء الخير والنور، كيف حالكم وأحوال الأهل؟ نسأل الله لكم العافية والسلامة، ونحن بخير والحمد لله. نتشرف بسماع أخباركم.'],
   morn: ['صباح الخير', 'صباح الخير، أسأل الله أن يكون صباحكم خيراً وبركة، وأن تكونوا جميعاً بصحة وعافية. اشتقنا لكم.'],
@@ -1055,6 +1096,7 @@ const FMSG = {
   cong: ['تهنئة', 'ألف مبروك، بارك الله لكم وبارك عليكم وجمع بينكم في خير، وأسعد الله أيامكم.']
 };
 function openFamMsg(id, kind) {
+  if (!id) return openGM(kind);
   const day = weekday(TODAY()), k = kind || (day === 4 || day === 5 ? 'jum' : 'eve'), rec = id ? ST.family.filter(x => x.id === id) : ST.family;
   openSheet(`<h2 class="h2">رسالة للأهل والأصدقاء</h2>
   <div class="chips">${Object.entries(FMSG).map(([v, [l]]) => `<button class="chip ${k === v ? 'on' : ''}" data-act="fmkind" data-v="${v}" data-id="${id || ''}">${l}</button>`).join('')}</div>
@@ -1199,10 +1241,11 @@ function vGrow() {
     return seg + `<button class="btn block" data-act="supopen" data-id="">${ic('plus')} إضافة مصنع أو مورّد</button>
     <div class="gap">${L.length ? L.map(s => `<div class="card click" data-act="supopen" data-id="${s.id}"><div class="row"><div class="ic sk" style="flex:none"><span class="ic">${ic('factory')}</span></div><div class="grow"><b>${esc(s.name)}</b><div class="small muted">${esc(s.product || '')}</div></div><span class="pill-st">${esc(s.status)}</span></div>${s.next ? `<div class="small muted" style="margin-top:6px">المتابعة القادمة: ${relDate(s.next, k)}${s.next <= k && !['معتمد', 'غير مناسب'].includes(s.status) ? ' <span class="badge warn">مستحقة</span>' : ''}</div>` : ''}</div>`).join('') : empty('factory', 'لا توجد جهات بعد', 'سجّل المصانع التي تريد طلب كتالوجاتها وتابع حالة كل واحدة')}</div>`;
   }
-  const L = ST.family;
+  const L = famG === 'all' ? ST.family : ST.family.filter(f => (f.group || '') === famG);
+  const gchips = `<div class="chips"><button class="chip ${famG === 'all' ? 'on' : ''}" data-act="famg" data-v="all">الكل<small>${ST.family.length}</small></button>${gmGroups().map(g => `<button class="chip ${famG === g ? 'on' : ''}" data-act="famg" data-v="${esc(g)}">${esc(gName(g))}<small>${ST.family.filter(f => (f.group || '') === g).length}</small></button>`).join('')}</div>`;
   return seg + `<button class="btn block" data-act="famopen" data-id="">${ic('plus')} إضافة قريب أو صديق</button>
-  <button class="btn ghost block" data-act="fammsg" data-id="">${ic('copy')} رسالة جمعة أو تحية للجميع</button>
-  <div class="gap">${L.length ? L.map(f => { const due = !f.last || diffDays(f.last, k) >= f.freq; return `<div class="card"><div class="row"><div class="grow click" data-act="famopen" data-id="${f.id}"><b>${esc(f.name)}</b> <span class="small muted">${esc(f.rel || '')}</span><div class="small muted">${FREQ.find(x => x[0] === f.freq)?.[1] || ''} · ${f.last ? 'آخر تواصل ' + relDate(f.last, k) : 'لم تتواصل بعد'}</div></div>${due ? '<span class="badge warn">مستحق</span>' : ''}<button class="btn sm" data-act="famdone" data-id="${f.id}">${ic('phone')} تم</button></div></div>`; }).join('') : `<div class="card">${empty('users', 'أضف أهلك الذين تريد البقاء على تواصل معهم', 'سيذكّرك التطبيق حسب التكرار الذي تختاره')}<div class="chips" style="justify-content:center">${['الوالدة', 'الوالد', 'الإخوة', 'الأصدقاء'].map(n => `<button class="chip" data-act="famquick" data-v="${n}">${n}</button>`).join('')}</div></div>`}</div>`;
+  <div class="row wrap"><button class="btn grow" data-act="gmopen">${ic('copy')} رسالة جماعية</button>${hasPicker() ? `<button class="btn ghost grow" data-act="famimport">${ic('phone')} استيراد من جهات الاتصال</button>` : ''}<button class="btn ghost" data-act="grpopen">قوائمي</button></div>${gchips}
+  <div class="gap">${L.length ? L.map(f => { const due = !f.last || diffDays(f.last, k) >= f.freq; return `<div class="card"><div class="row"><div class="grow click" data-act="famopen" data-id="${f.id}"><b>${esc(f.name)}</b> <span class="small muted">${esc(f.rel || '')}</span> <span class="badge">${esc(gName(f.group || ''))}</span><div class="small muted">${FREQ.find(x => x[0] === f.freq)?.[1] || ''} · ${f.last ? 'آخر تواصل ' + relDate(f.last, k) : 'لم تتواصل بعد'}</div></div>${due ? '<span class="badge warn">مستحق</span>' : ''}<button class="btn sm" data-act="famdone" data-id="${f.id}">${ic('phone')} تم</button></div></div>`; }).join('') : `<div class="card">${empty('users', 'أضف أهلك الذين تريد البقاء على تواصل معهم', 'سيذكّرك التطبيق حسب التكرار الذي تختاره')}<div class="chips" style="justify-content:center">${['الوالدة', 'الوالد', 'الإخوة', 'الأصدقاء'].map(n => `<button class="chip" data-act="famquick" data-v="${n}">${n}</button>`).join('')}</div></div>`}</div>`;
 }
 function supMsg(s) {
   const nm = cfg().name ? `معكم ${cfg().name}` : 'معكم';
@@ -1221,9 +1264,10 @@ function openSup(id) {
   <div class="row"><button class="btn grow" data-act="supsave" data-id="${id || ''}">حفظ</button>${id ? `<button class="btn danger" data-act="supdel" data-id="${id}">${ic('trash')} حذف</button>` : ''}</div>`);
 }
 function openFam(id, preset) {
-  const f = id ? ST.family.find(x => x.id === id) : { name: preset || '', rel: '', freq: 7, last: null, phone: '' };
+  const f = id ? ST.family.find(x => x.id === id) : { name: preset || '', rel: '', freq: 7, last: null, phone: '', group: famG === 'all' ? '' : famG };
   openSheet(`<h2 class="h2">${id ? 'تعديل' : 'إضافة للتواصل'}</h2>
   ${fld('الاسم', `<input id="fm-name" type="text" value="${esc(f.name)}">`)}${fld('صلة القرابة', `<input id="fm-rel" type="text" value="${esc(f.rel || '')}" placeholder="اختياري">`)}
+  ${fld('القائمة', `<select id="fm-grp"><option value="">غير مصنّف</option>${(ST.groups || []).map(g => `<option ${f.group === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select>`)}
   ${fld('الرقم (واتساب/اتصال)', `<input id="fm-ph" type="tel" inputmode="tel" value="${esc(f.phone || '')}" placeholder="05xxxxxxxx أو بصيغة دولية">`)}${hasPicker() ? `<button class="btn ghost block" data-act="pickcon" data-n="fm-name" data-p="fm-ph">${ic('phone')} اختيار من جهات الاتصال</button>` : ''}
   ${fld('كم مرة تتواصل؟', `<select id="fm-freq">${FREQ.map(([v, l]) => `<option value="${v}" ${f.freq === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
   <div class="row"><button class="btn grow" data-act="famsave" data-id="${id || ''}">حفظ</button>${id ? `<button class="btn danger" data-act="famdel" data-id="${id}">${ic('trash')} حذف</button>` : ''}</div>`);
@@ -1335,6 +1379,10 @@ function vSettings() {
     ${fld('نوع جمعة الإجازة الافتراضي', selb('settings.friOffDefault', FMODES))}
     <div class="grid2">${fld('انطلاق الخرجة بعد الغداء', inp('settings.friTripTime', 'time'))}${fld('انطلاق الخرجة الصباحية', inp('settings.friOut', 'time'))}</div>
     ${fld('بدء تجهيز الغداء (للخرجة الصباحية)', inp('settings.friPrep', 'time'))}</section>
+  <section class="card gap"><h2>${ic('phone')}<span>الواتساب والتواصل</span></h2>
+    ${fld('إرسال الرسائل عبر', selb('settings.waApp', WAOPTS))}
+    ${fld('اسم حزمة تطبيق واتساب آخر (للخيار الأخير)', inp('settings.waPkg', 'text', 'dir="ltr" placeholder="com.whatsapp"'))}
+    <div class="small muted">لديك حسابان شخصيان وتجاري؟ «تلقائي» يعرض لك اختيار التطبيق في كل مرة، و«مشاركة دفعة واحدة» تعرض كل نسخ واتساب المثبّتة.</div></section>
   <section class="card"><h2>${ic('bell')}<span>التنبيهات</span></h2>
     ${tog('settings.alerts.wake', 'الاستيقاظ')}${tog('settings.alerts.pick', 'توصيل واستلام الولد')}${tog('settings.alerts.work', 'الذهاب للدوام')}${tog('settings.alerts.wird', 'ورد القرآن')}
     <div class="sline"><span class="grow">صوت المهام</span><select style="width:150px" data-bind="settings.sounds.task">${soundOptions(c.sounds.task)}</select></div>
@@ -1375,7 +1423,7 @@ function go(t) { tab = t; closeSheet(); render(); $('#main').scrollTop = 0; }
 
 /* ---- الأحداث ---- */
 const ACT = {
-  goto: el => { if (el.dataset.v === 'plan') { openReview(); return; } if (/^links/.test(el.dataset.v)) { const kd = el.dataset.v.split(':')[1]; kd ? launchKind(kd) : openLinks(); return; } if (el.dataset.v === 'famsg') { openFamMsg('', 'jum'); return; } const v = el.dataset.v, M = { growth: ['grow', 'skills'], suppliers: ['grow', 'sup'], family: ['grow', 'fam'] }; if (M[v]) { tab = M[v][0]; growT = M[v][1]; closeSheet(); render(); $('#main').scrollTop = 0; } else go(v); },
+  goto: el => { if (el.dataset.v === 'plan') { openReview(); return; } if (/^links/.test(el.dataset.v)) { const kd = el.dataset.v.split(':')[1]; kd ? launchKind(kd) : openLinks(); return; } if (el.dataset.v === 'famsg') { openGM('jum'); return; } const v = el.dataset.v, M = { growth: ['grow', 'skills'], suppliers: ['grow', 'sup'], family: ['grow', 'fam'] }; if (M[v]) { tab = M[v][0]; growT = M[v][1]; closeSheet(); render(); $('#main').scrollTop = 0; } else go(v); },
   fmode: el => { ST.dayOpt[TODAY()] = el.dataset.v; save(); render(); },
   tmtype: el => { ST.dayType[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
   tmmode: el => { ST.dayOpt[addDays(TODAY(), 1)] = el.dataset.v; save(); render(); },
@@ -1422,11 +1470,24 @@ const ACT = {
     document.querySelectorAll('.sheet .rt:checked').forEach(cb => { const t = ST.tasks.find(x => x.id === cb.dataset.id); if (t) { t.date = tm; n++; } });
     save(); render(); say(n ? `أُضيف ${n} للغد` : 'لا شيء للإضافة'); openPlan('tomorrow');
   },
+  gmopen: () => openGM(), grpopen: () => openGroups(), gmclose: () => closeSheet(),
+  gmkind: el => { gmSel(); GM.text = ''; openGM(el.dataset.v); },
+  famg: el => { famG = el.dataset.v; render(); },
+  grpadd: () => { const n = $('#grp-new').value.trim(); if (!n) return; if (!(ST.groups || []).includes(n)) (ST.groups = ST.groups || []).push(n); save(); openGroups(); render(); },
+  grpdel: el => { const g = el.dataset.v; ST.groups = (ST.groups || []).filter(x => x !== g); ST.family.forEach(f => { if (f.group === g) f.group = ''; }); if (famG === g) famG = 'all'; save(); openGroups(); render(); },
+  famimport: async () => { try { const r = await navigator.contacts.select(['name', 'tel'], { multiple: true }); const g = famG === 'all' ? 'الأهل' : famG; let n = 0; for (const c of r || []) { const name = (c.name || [])[0] || '', ph = (c.tel || [])[0] || ''; if (!name || ST.family.some(f => normAr(f.name) === normAr(name) && waNum(f.phone) === waNum(ph))) continue; ST.family.push({ id: uid(), name, rel: '', freq: 7, last: null, phone: ph, group: g === 'غير مصنّف' ? '' : g }); n++; } save(); render(); say(n ? `أُضيف ${n} إلى قائمة ${g}` : 'لا جهات جديدة'); } catch (e) { say('استيراد الجهات غير مدعوم هنا', 'warn'); } },
+  gmshare: async () => { const g = gmSel(); if (!g.length) say('اختر قائمة واحدة على الأقل', 'warn'); const text = GM.text.replace(/\{الاسم\}/g, '').trim(); if (!text) return;
+    const done = () => { g.forEach(x => { (ST.gmLast = ST.gmLast || {})[x] = TODAY(); }); save(); };
+    try { if (navigator.share) { await navigator.share({ text }); done(); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    try { await navigator.clipboard.writeText(text); } catch (e) { } window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank'); done(); },
+  gmstart: () => { const g = gmSel(); if (!g.length) return say('اختر قائمة واحدة على الأقل', 'warn'); GM.q = ST.family.filter(f => g.includes(f.group || '') && waNum(f.phone)).map(f => f.id); if (!GM.q.length) return say('لا أرقام صالحة في القوائم المختارة', 'warn'); GM.i = 0; openGMQueue(); },
+  gmnext: () => { const f = ST.family.find(x => x.id === GM.q[GM.i]); if (!f) return; openWA(f.phone, GM.text.replace(/\{الاسم\}/g, f.name)); f.last = TODAY(); GM.i++; save(); setTimeout(openGMQueue, 350); },
+  gmskip: () => { GM.i++; openGMQueue(); },
   planopen: el => openPlan(el.dataset.d),
   plansave: el => {
     const k = PLAN.k, add = [];
     document.querySelectorAll('.sheet .pk:checked:not(:disabled)').forEach(cb => { const i = +cb.dataset.i, it = PLAN.items[i], tm = document.querySelector(`.sheet .pt[data-i="${i}"]`).value || it.time; add.push({ it, tm }); });
-    for (const { it, tm } of add) { const t = { id: uid(), tag: `pl|${it.date || k}|${it.t}`, title: it.t, date: it.date || k, time: tm, cat: it.cat, repeat: 'none', remind: +$('#pl-rem').value, done: false, contact: it.contact || '', phone: it.phone || '', appKind: it.appKind || '' }; if (!t.contact && !t.phone) linkContact(t); ST.tasks.push(t); if (it.fam) { const f = ST.family.find(x => x.id === it.fam); if (f) f.last = TODAY(); } }
+    for (const { it, tm } of add) { const t = { id: uid(), tag: `pl|${it.date || k}|${it.t}`, title: it.t, date: it.date || k, time: tm, cat: it.cat, repeat: 'none', remind: +$('#pl-rem').value, done: false, contact: it.contact || '', phone: it.phone || '', appKind: it.appKind || '', act: it.act || '' }; if (!t.contact && !t.phone) linkContact(t); ST.tasks.push(t); if (it.fam) { const f = ST.family.find(x => x.id === it.fam); if (f) f.last = TODAY(); } }
     const own = $('#pl-own').value.trim(); let n = add.length;
     if (own) { const p = parseTask(own, NOW(), kk => prayersFor(kk, cfg())); if (!p.date) p.date = k; const mt = mkTask(p); mt.remind = +$('#pl-rem').value; ST.tasks.push(mt); n++; }
     save(); closeSheet(); render(); say(n ? `أُضيفت ${n} مهام` : 'لم تحدد مهاماً');
@@ -1500,7 +1561,7 @@ const ACT = {
   },
   famopen: el => openFam(el.dataset.id || null), famquick: el => openFam(null, el.dataset.v),
   famsave: el => {
-    const id = el.dataset.id, o = { name: $('#fm-name').value.trim(), rel: $('#fm-rel').value.trim(), phone: $('#fm-ph').value.trim(), freq: +$('#fm-freq').value };
+    const id = el.dataset.id, o = { name: $('#fm-name').value.trim(), rel: $('#fm-rel').value.trim(), phone: $('#fm-ph').value.trim(), group: $('#fm-grp').value, freq: +$('#fm-freq').value };
     if (!o.name) return say('اكتب الاسم', 'warn');
     if (id) Object.assign(ST.family.find(x => x.id === id), o); else ST.family.push({ id: uid(), last: null, ...o });
     save(); closeSheet(); render();
