@@ -66,7 +66,6 @@ jobs:
           add=''.join('<uses-permission android:name="android.permission.%s" />\n    '%x for x in perms)
           s=s.replace('<application',add+'<application',1)
           s=s.replace('<intent-filter>','<intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="asad" /></intent-filter>\n            <intent-filter>',1)
-          s=re.sub(r'(<activity[^>]*MainActivity[^>]*?)(>)',r'\1 android:launchMode="singleTask"\2',s,1)
           s=s.replace('</activity>','<meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" /></activity>',1)
           open(p,'w',encoding='utf8').write(s)
           open('app/src/main/res/values/shortcut_strings.xml','w',encoding='utf8').write('<resources><string name="sc_voice">مساعد صوتي</string><string name="sc_tasks">مهام اليوم</string><string name="sc_plan">مهام الغد</string></resources>')
