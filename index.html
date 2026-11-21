@@ -585,21 +585,20 @@ let NSOK = false, nsT = null;
 const hash32 = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return Math.abs(h) % 2147483000 + 1; };
 const CHANS = { prayer: ['الصلوات', 'prayer_bell'], task: ['مهامي (منبّه)', 'task_alarm'], routine: ['الفقرات الروتينية', 'routine_soft'], pre: ['تنبيه قبل الموعد', 'pre_chime'] };
 const chanOf = a => /\|p\|/.test(a.id) ? 'prayer' : (a.taskId && !a.pre) ? 'task' : (a.pre || /\|pre\|/.test(a.id)) ? 'pre' : 'routine';
-const ext = u => { if (NATIVE) { NP('AsadNative').openUri({ url: u }).catch(() => { }); } else if (/^intent:/.test(u)) location.href = u; else window.open(u, '_blank'); };
+const ext = u => { if (NATIVE) { NP('AsadNative').openUri({ url: u }).catch(e => { if (/^intent:/.test(u)) { const m = /phone=(\d+)/.exec(u), t = /text=([^;&#]*)/.exec(u); NP('AsadNative').openUri({ url: m ? 'https://wa.me/' + m[1] + (t ? '?text=' + t[1] : '') : 'https://wa.me/' }).catch(e2 => nerr('فتح الرابط', e2)); } else nerr('فتح الرابط', e); }); } else if (/^intent:/.test(u)) location.href = u; else window.open(u, '_blank'); };
 async function pickOne() {
-  if (NATIVE) { const r = await NP('AsadNative').pickContact(); return { name: r.name || '', tel: r.tel || '' }; }
+  if (NATIVE) { try { const r = await NP('AsadNative').pickContact(); return { name: r.name || '', tel: r.tel || '' }; } catch (e) { nerr('جهات الاتصال', e); return null; } }
   const r = await navigator.contacts.select(['name', 'tel'], { multiple: false }); return r && r[0] ? { name: (r[0].name || [])[0] || '', tel: (r[0].tel || [])[0] || '' } : null;
 }
+const nerr = (w, e) => { try { say(w + ': ' + ((e && (e.message || e.code)) || e || 'خطأ'), 'warn'); } catch (_) { } };
 async function nativeInit() {
   if (!NATIVE) return;
-  try {
-    const LN = NP('LocalNotifications');
-    for (const [id, [name, snd]] of Object.entries(CHANS)) await LN.createChannel({ id: 'a_' + id, name, description: name, importance: 5, visibility: 1, sound: snd + '.wav', vibration: true, lights: true });
-    const p = await LN.checkPermissions(); if (p.display !== 'granted') await LN.requestPermissions();
-    LN.addListener('localNotificationActionPerformed', e => { const x = ((e || {}).notification || {}).extra || {}; if (x.taskId) openTaskAct(x.taskId); else if (x.plan) openReview(); });
-    if (!ST.settings.exactAsked) { ST.settings.exactAsked = 1; save(); try { const ex = await LN.checkExactNotificationSetting(); if (ex.exact_alarm !== 'granted') LN.changeExactNotificationSetting(); } catch (e) { } }
-    nativeSync();
-  } catch (e) { }
+  const LN = NP('LocalNotifications');
+  try { const p = await LN.checkPermissions(); if (p.display !== 'granted') await LN.requestPermissions(); } catch (e) { nerr('إذن الإشعارات', e); }
+  try { for (const [id, [name, snd]] of Object.entries(CHANS)) await LN.createChannel({ id: 'a_' + id, name, description: name, importance: 5, visibility: 1, sound: snd + '.wav', vibration: true, lights: true }); } catch (e) { nerr('قنوات التنبيه', e); }
+  try { LN.addListener('localNotificationActionPerformed', e => { const x = ((e || {}).notification || {}).extra || {}; if (x.taskId) openTaskAct(x.taskId); else if (x.plan) openReview(); }); } catch (e) { }
+  try { if (!ST.exactAsked) { ST.exactAsked = 1; save(); const ex = await LN.checkExactNotificationSetting(); if (ex.exact_alarm !== 'granted') LN.changeExactNotificationSetting(); } } catch (e) { }
+  nativeSync();
 }
 function nativeSyncSoon() { if (!NATIVE) return; clearTimeout(nsT); nsT = setTimeout(nativeSync, 1500); }
 async function nativeSync() {
@@ -610,7 +609,7 @@ async function nativeSync() {
     const pend = await LN.getPending(); if (pend.notifications.length) await LN.cancel({ notifications: pend.notifications.map(n => ({ id: n.id })) });
     for (let i = 0; i < list.length; i += 40) await LN.schedule({ notifications: list.slice(i, i + 40) });
     NSOK = true;
-  } catch (e) { NSOK = false; }
+  } catch (e) { NSOK = false; nerr('جدولة التنبيهات', e); }
 }
 class NativeSR {
   constructor() { this.lang = 'ar-SA'; this.on = false; this.last = ''; }
@@ -973,8 +972,11 @@ const selb = (p, opts, num) => `<select data-bind="${p}" ${num ? 'data-num="1"' 
 const tog = (p, label, sub = '') => `<label class="sline"><span class="grow">${label}${sub ? `<small class="muted" style="display:block">${sub}</small>` : ''}</span><span class="switch"><input type="checkbox" data-bind="${p}" ${getP(p) ? 'checked' : ''}><i></i></span></label>`;
 const fld = (l, body) => `<div class="field"><label>${l}</label>${body}</div>`;
 
-function openSheet(html) { closeSheet(); const el = document.createElement('div'); el.className = 'scrim'; el.innerHTML = `<div class="sheet" role="dialog"><div class="grab"></div>${html}</div>`; el.addEventListener('click', e => { if (e.target === el) closeSheet(); }); $('#app').append(el); }
-function closeSheet() { $$('.scrim').forEach(e => e.remove()); }
+function openSheet(html) { const had = !!$('.scrim'); rmSheet(); if (!had) history.pushState({ s: 1 }, ''); const el = document.createElement('div'); el.className = 'scrim'; el.innerHTML = `<div class="sheet" role="dialog"><div class="grab"></div>${html}</div>`; el.addEventListener('click', e => { if (e.target === el) closeSheet(); }); $('#app').append(el); }
+let skipPop = 0;
+function rmSheet() { $$('.scrim').forEach(e => e.remove()); }
+function closeSheet() { if ($('.scrim')) { rmSheet(); if (history.state && history.state.s) { skipPop++; history.back(); } } }
+addEventListener('popstate', () => { if (skipPop) { skipPop--; return; } if ($('.scrim')) rmSheet(); else if (tab !== 'today') { tab = 'today'; render(); } else if (NATIVE) { try { NP('App').exitApp(); } catch (e) { } } });
 
 function toggleBlock(k, key) {
   const d = (ST.done[k] = ST.done[k] || {}), to = !d[key];
@@ -994,18 +996,41 @@ function toggleTask(id, force) {
   if (to && t.repeat && t.repeat !== 'none') {
     const bs = t.date && t.date >= today ? t.date : today; t.date = t.repeat === 'monthly' ? addMonth(bs) : addDays(bs, t.repeat === 'daily' ? 1 : 7); t.lastDone = today;
     say(`تم. ستتكرر ${t.repeat === 'daily' ? 'غداً' : t.repeat === 'monthly' ? 'الشهر القادم' : 'الأسبوع القادم'}`);
-  } else { t.done = to; t.doneAt = to ? today : null; }
+  } else { t.done = to; t.doneAt = to ? today : null; t.doneDay = to ? today : null; t.doneMin = to ? NOW().min : null; }
   save(); render();
 }
 function streak() { let k = TODAY(), n = 0; if (!ST.skillLog[k]) k = addDays(k, -1); while (ST.skillLog[k]) { n++; k = addDays(k, -1); } return n; }
 const dueFamily = () => ST.family.filter(f => !f.last || diffDays(f.last, TODAY()) >= f.freq);
 const dueSup = () => ST.suppliers.filter(s => s.next && s.next <= TODAY() && !['معتمد', 'غير مناسب'].includes(s.status));
 
+const durTxt = m => m < 60 ? `${m} دقيقة` : m < 1440 ? `${Math.floor(m / 60)} ساعة${m % 60 ? ' و' + (m % 60) + ' د' : ''}` : `${Math.floor(m / 1440)} يوم`;
+function lateTxt(date, time, dday, dmin) {
+  if (!date || dmin == null) return '';
+  const m = diffDays(date, dday) * 1440 + dmin - (time ? toMin(time) : 0);
+  if (!time) return m > 1439 ? 'متأخرة ' + durTxt(m) : 'في موعدها';
+  return m <= 5 ? 'في موعدها' : 'متأخرة ' + durTxt(m);
+}
+function blkLate(b, dm, done) {
+  if (!done || dm == null) return '';
+  const m = dm - b.t; return (b.prayer ? '' : '') + `تمت ${fmt12(dm)} · ` + (m <= 5 ? 'في موعدها' : 'متأخرة ' + durTxt(m));
+}
+async function aiRefine(txt, p) {
+  try {
+    const n = NOW(), out = await askAI([{ role: 'user', content: txt }], `اليوم ${TODAY()} والساعة ${fmt12(n.min)}. حوّل كلام المستخدم العشوائي إلى مهمة أو موعد واحد مرتّب ومختصر. أجب بـJSON فقط بلا شرح: {"title":"عنوان مختصر واضح مثل: موعد مع فلان","date":"YYYY-MM-DD أو null","time":"HH:MM بنظام 24 ساعة أو null","cat":"work|family|faith|growth|general"}. إن ذُكر وقت مرتبط بصلاة فاجعل time null.`);
+    const j = JSON.parse(out.match(/\{[\s\S]*\}/)[0]);
+    if (j.title) p.title = String(j.title).slice(0, 80);
+    if (/^\d{4}-\d\d-\d\d$/.test(j.date || '')) p.date = j.date;
+    if (/^\d{1,2}:\d\d$/.test(j.time || '')) p.time = j.time.padStart(5, '0');
+    if (['work', 'family', 'faith', 'growth', 'general'].includes(j.cat)) p.cat = j.cat;
+  } catch (e) { }
+  return p;
+}
 function taskRow(t, today) {
   const od = t.date && t.date < today && !t.done;
   const meta = [`<span class="dot"></span>${CATN[t.cat] || 'عام'}`];
   if (t.date) meta.push(od ? `<span class="badge warn">متأخرة · ${relDate(t.date, today)}</span>` : relDate(t.date, today));
   if (t.time) meta.push(fmt12(toMin(t.time)));
+  if (t.done && t.doneMin != null) { const lt = lateTxt(t.date, t.time, t.doneDay || today, t.doneMin); meta.push(`<span class="badge ${/متأخرة/.test(lt) ? 'warn' : ''}">أُنجزت ${fmt12(t.doneMin)} · ${lt}</span>`); }
   if (t.repeat && t.repeat !== 'none') meta.push(t.repeat === 'daily' ? 'يومياً' : t.repeat === 'monthly' ? 'شهرياً' : 'أسبوعياً');
   if (t.time && t.remind != null && t.remind >= 0) meta.push(ic('bell').replace('class="i ', 'style="width:14px;height:14px" class="i '));
   return `<div class="task ${t.done ? 'done' : ''}" style="--cc:${CATCOL[t.cat] || CATCOL.general}"><button class="ck ${t.done ? 'on' : ''}" data-act="ttoggle" data-id="${t.id}" aria-label="إنجاز">${ic('check')}</button><div class="grow click" data-act="tedit" data-id="${t.id}"><div class="tt">${esc(t.title)}</div><div class="meta">${meta.join(' · ')}</div></div>${t.contact || t.phone || t.appKind || t.act || t.q ? `<button class="btn sm ghost" data-act="tact" data-id="${t.id}" aria-label="تواصل">${ic('phone')}</button>` : ''}</div>`;
@@ -1320,7 +1345,7 @@ function vToday() {
   let nowKey = null; for (const b of D.blocks) { if (b.info || b.span) continue; if (b.t <= n.min) nowKey = b.key; }
   const wp = wirdPortion(ST.wird.pos, ST.wird.pace);
   const rows = D.blocks.map(b => {
-    const done = !!dn[b.key], sub = b.span ? `حتى ${fmt12(b.t + b.dur)}` : b.optional ? 'اختياري' : b.key === 'wird' && !wp.finished ? wp.label : b.key === 'sleep' ? '' : '';
+    const done = !!dn[b.key], sub0 = b.span ? `حتى ${fmt12(b.t + b.dur)}` : b.optional ? 'اختياري' : b.key === 'wird' && !wp.finished ? wp.label : '', sub = sub0 + (blkLate(b, (ST.doneAt[k] || {})[b.key], done) ? (sub0 ? ' · ' : '') + blkLate(b, (ST.doneAt[k] || {})[b.key], done) : '');
     return `<div class="tl-item ${b.info ? 'info' : ''} ${done ? 'done' : ''} ${b.key === nowKey ? 'now' : ''} ${b.t < n.min ? 'past' : ''}" style="--cc:${CATCOL[b.cat] || CATCOL.general}"><div class="tl-t">${fmt12(b.t)}</div><div class="tl-dot"><i></i></div><div class="tl-body"><div class="tl-tt ${b.link ? 'click' : ''}" ${b.link ? `data-act="goto" data-v="${b.link}"` : ''}>${esc(b.title)}${sub ? `<small>${sub}</small>` : ''}</div>${b.info ? '' : `<button class="ck ${done ? 'on' : ''}" data-act="blk" data-k="${k}" data-v="${b.key}" aria-label="تم">${ic('check')}</button>`}</div></div>`;
   }).join('');
   const todayTasks = ST.tasks.filter(t => !t.done && t.date && t.date <= k).sort((a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.time || '')));
@@ -1633,7 +1658,7 @@ function updCd() {
   const el = $('#cd'); if (!el) return; let s = Math.max(0, Math.round((+el.dataset.at - Date.now()) / 1000));
   el.textContent = `${pad(Math.floor(s / 3600))}:${pad(Math.floor(s % 3600 / 60))}:${pad(s % 60)}`;
 }
-function go(t) { tab = t; closeSheet(); render(); $('#main').scrollTop = 0; }
+function go(t) { const was = tab; closeSheet(); tab = t; if (was === 'today' && t !== 'today') history.pushState({ t: 1 }, ''); render(); $('#main').scrollTop = 0; }
 
 /* ---- الأحداث ---- */
 const ACT = {
@@ -1731,7 +1756,7 @@ const ACT = {
   extgo: el => ext(el.dataset.u),
   reportopen: () => openReport(),
   reportn: el => openReport(+el.dataset.v),
-  reportgo: async el => { el.disabled = true; const o = el.innerHTML; el.textContent = 'جارٍ إنشاء التقرير…'; try { const blob = await htmlToPdf(reportInner(reportData(RP_N))); await savePdf(blob, `asad-report-${TODAY()}.pdf`); say('تم إنشاء التقرير'); } catch (e) { say('تعذّر إنشاء PDF: ' + (e && e.message || ''), 'warn'); } el.disabled = false; el.innerHTML = o; },
+  reportgo: async el => { el.disabled = true; const o = el.innerHTML; el.textContent = 'جارٍ إنشاء التقرير…'; try { if (NATIVE) { await NP('AsadNative').printHtml({ html: reportInner(reportData(RP_N)), name: `asad-report-${TODAY()}` }); say('اختر «حفظ بصيغة PDF» من نافذة الطباعة'); el.disabled = false; el.innerHTML = o; return; } const blob = await htmlToPdf(reportInner(reportData(RP_N))); await savePdf(blob, `asad-report-${TODAY()}.pdf`); say('تم إنشاء التقرير'); } catch (e) { say('تعذّر إنشاء PDF: ' + (e && e.message || ''), 'warn'); } el.disabled = false; el.innerHTML = o; },
   natchan: el => NP('AsadNative').channelSettings({ id: 'a_' + el.dataset.v }).catch(() => say('تعذّر فتح الإعدادات', 'warn')),
   natexact: () => { try { NP('LocalNotifications').changeExactNotificationSetting(); } catch (e) { } },
   natbatt: () => NP('AsadNative').batteryOpt().catch(() => { }),
@@ -1753,9 +1778,10 @@ const ACT = {
   daytype: el => { ST.dayType[TODAY()] = el.dataset.v; save(); render(); },
   ttoggle: el => toggleTask(el.dataset.id), tedit: el => openTask(el.dataset.id || null),
   tf: el => { taskF = el.dataset.v; render(); }, qex: el => { const i = $('#qa'); i.value = el.dataset.v; i.focus(); },
-  qadd: () => {
+  qadd: async () => {
     const i = $('#qa'), txt = i.value.trim(); if (!txt) return;
-    const p = parseTask(txt, NOW(), k => prayersFor(k, cfg()));
+    let p = parseTask(txt, NOW(), k => prayersFor(k, cfg()));
+    if (aiReady() && txt.length > 10) { say('يرتّب المساعد جملتك…'); p = await aiRefine(txt, p); }
     ST.tasks.push(mkTask(p));
     taskF = p.date ? (p.date <= TODAY() ? 'today' : 'up') : 'none'; save(); render();
     say(`أُضيفت: ${p.title}${p.date ? ' · ' + relDate(p.date, TODAY()) : ''}${p.time ? ' · ' + fmt12(toMin(p.time)) : ''}`);
@@ -1869,7 +1895,7 @@ function routeLink(n) {
 /* ---- الإقلاع ---- */
 if (!ST.trackFrom) { ST.trackFrom = TODAY(); save(); }
 applyTheme(); pruneFired(); render(); initCaps(); tick(); nativeInit();
-try { const gm = /#go-(\w+)/.exec(location.hash); if (gm) { routeLink(gm[1]); history.replaceState(null, '', location.pathname); } if (NATIVE) { const AP = NP('App'); AP.addListener('backButton', () => { if ($('.scrim')) closeSheet(); else if (tab !== 'today') go('today'); else AP.exitApp(); }); AP.addListener('appUrlOpen', e => { const m = /asad:\/\/(\w+)/.exec(e.url || ''); if (m) routeLink(m[1]); }); AP.getLaunchUrl().then(r => { const m = r && /asad:\/\/(\w+)/.exec(r.url || ''); if (m) routeLink(m[1]); }).catch(() => { }); } } catch (e) { }
+try { const gm = /#go-(\w+)/.exec(location.hash); if (gm) { routeLink(gm[1]); history.replaceState(null, '', location.pathname); } if (NATIVE) { const AP = NP('App'); AP.addListener('appUrlOpen', e => { const m = /asad:\/\/(\w+)/.exec(e.url || ''); if (m) routeLink(m[1]); }); AP.getLaunchUrl().then(r => { const m = r && /asad:\/\/(\w+)/.exec(r.url || ''); if (m) routeLink(m[1]); }).catch(() => { }); } } catch (e) { }
 try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', e => { const id = e.data && e.data.taskId; if (id) openTaskAct(id); }); const m = /#t=([\w-]+)/.exec(location.hash); if (m) { openTaskAct(m[1]); history.replaceState(null, '', location.pathname); } } catch (e) { }
 setInterval(tick, 5000);
 setInterval(() => { updCd(); const n = NOW(); if (n.min !== lastMin) { lastMin = n.min; const a = document.activeElement; if ((tab === 'today' || tab === 'prayer') && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) && !$('.scrim')) render(); } }, 1000);

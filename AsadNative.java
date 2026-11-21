@@ -1,7 +1,12 @@
 package com.asad.tasks;
 
 import android.app.NotificationChannel;
+import android.content.Context;
 import android.content.Intent;
+import android.print.PrintAttributes;
+import android.print.PrintManager;
+import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import android.database.Cursor;
 import android.net.Uri;
 import android.os.Build;
@@ -14,6 +19,27 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 @CapacitorPlugin(name = "AsadNative")
 public class AsadNative extends Plugin {
+  private WebView keep;
+
+  @PluginMethod
+  public void printHtml(final PluginCall call) {
+    final String html = call.getString("html", "");
+    final String name = call.getString("name", "report");
+    getActivity().runOnUiThread(new Runnable() {
+      public void run() {
+        keep = new WebView(getActivity());
+        keep.setWebViewClient(new WebViewClient() {
+          @Override public void onPageFinished(WebView v, String u) {
+            PrintManager pm = (PrintManager) getActivity().getSystemService(Context.PRINT_SERVICE);
+            pm.print(name, v.createPrintDocumentAdapter(name), new PrintAttributes.Builder().build());
+            call.resolve();
+          }
+        });
+        keep.loadDataWithBaseURL(null, html, "text/html", "utf-8", null);
+      }
+    });
+  }
+
   @PluginMethod
   public void pickContact(PluginCall call) {
     Intent i = new Intent(Intent.ACTION_PICK, ContactsContract.CommonDataKinds.Phone.CONTENT_URI);
