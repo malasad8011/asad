@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+  <shortcut android:shortcutId="voice" android:enabled="true" android:shortcutShortLabel="@string/sc_voice" android:shortcutLongLabel="@string/sc_voice">
+    <intent android:action="android.intent.action.VIEW" android:data="asad://voice" android:targetPackage="com.asad.tasks" android:targetClass="com.asad.tasks.MainActivity" />
+  </shortcut>
+  <shortcut android:shortcutId="today" android:enabled="true" android:shortcutShortLabel="@string/sc_tasks" android:shortcutLongLabel="@string/sc_tasks">
+    <intent android:action="android.intent.action.VIEW" android:data="asad://today" android:targetPackage="com.asad.tasks" android:targetClass="com.asad.tasks.MainActivity" />
+  </shortcut>
+  <shortcut android:shortcutId="plan" android:enabled="true" android:shortcutShortLabel="@string/sc_plan" android:shortcutLongLabel="@string/sc_plan">
+    <intent android:action="android.intent.action.VIEW" android:data="asad://plan" android:targetPackage="com.asad.tasks" android:targetClass="com.asad.tasks.MainActivity" />
+  </shortcut>
+</shortcuts>

@@ -549,27 +549,98 @@ function deepMerge(b, o) {
   const r = { ...b }; for (const k in o) r[k] = k in b ? deepMerge(b[k], o[k]) : o[k]; return r;
 }
 
-const APP_VER = '15 · العملاء + المساعد الذكي + قوائم واتساب + مهارات';
-if("serviceWorker"in navigator&&location.protocol.startsWith("http"))navigator.serviceWorker.register("sw.js").catch(()=>{});
+const APP_VER = '16 · تطبيق أصلي (APK) + تقرير PDF + نغمات بلا حد';
+if("serviceWorker"in navigator&&location.protocol.startsWith("http")&&!window.Capacitor)navigator.serviceWorker.register("sw.js").catch(()=>{});
 const LS = 'asad.state.v1', LSAI = 'asad.ai.v1', LSSND = 'asad.sounds.v1', LSFIRED = 'asad.fired.v1';
 const DEF = {
   settings: { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), defaultDay: 'free', theme: 'auto', fridayRule: 'odd_off', bottomSpace: 'auto', name: '', prayerOn: { fajr: true, dhuhr: true, asr: true, maghrib: true, isha: true } },
-  done: {}, dayType: {}, dayOpt: {}, groups: ['الأهل', 'الأصدقاء', 'الأعمام والعمات', 'أبناء العمومة', 'أصحاب البلاد'], gmLast: {}, gLinks: {}, planLog: {}, clients: [], contacts: [], links: [{ id: 'l1', name: 'القرآن الكريم (quran.com)', url: 'https://quran.com/ar', kind: 'quran' }, { id: 'l2', name: 'التفسير (tafsir.app)', url: 'https://tafsir.app/', kind: 'tafsir' }, { id: 'l3', name: 'أذكار المسلم (حصن المسلم)', url: 'https://hisnmuslim.com/', kind: 'adhkar' }], tasks: [], wird: { pos: 0, pace: 0, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
+  done: {}, dayType: {}, dayOpt: {}, doneAt: {}, taskLog: [], trackFrom: '', groups: ['الأهل', 'الأصدقاء', 'الأعمام والعمات', 'أبناء العمومة', 'أصحاب البلاد'], gmLast: {}, gLinks: {}, planLog: {}, clients: [], contacts: [], links: [{ id: 'l1', name: 'القرآن الكريم (quran.com)', url: 'https://quran.com/ar', kind: 'quran' }, { id: 'l2', name: 'التفسير (tafsir.app)', url: 'https://tafsir.app/', kind: 'tafsir' }, { id: 'l3', name: 'أذكار المسلم (حصن المسلم)', url: 'https://hisnmuslim.com/', kind: 'adhkar' }], tasks: [], wird: { pos: 0, pace: 0, khatmat: 0, days: {}, tafsir: {} }, family: [], suppliers: [], skillLog: {}, chat: []
 };
 DEF.settings.sounds.wake = 'long';
 let ST = deepMerge(JSON.parse(JSON.stringify(DEF)), rd(LS, {}));
 let SND = rd(LSSND, []);
 let FIRED = rd(LSFIRED, {});
+/* ====== أصوات بلا حد للحجم (IndexedDB) ====== */
+const IDB = {
+  open: () => new Promise((res, rej) => { const r = indexedDB.open('asad-snd', 1); r.onupgradeneeded = () => r.result.createObjectStore('s', { keyPath: 'id' }); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); }),
+  async all() { const db = await IDB.open(); return new Promise(res => { const q = db.transaction('s').objectStore('s').getAll(); q.onsuccess = () => res(q.result || []); q.onerror = () => res([]); }); },
+  async put(o) { const db = await IDB.open(); return new Promise((res, rej) => { const t = db.transaction('s', 'readwrite'); t.objectStore('s').put(o); t.oncomplete = res; t.onerror = () => rej(t.error); }); },
+  async del(id) { const db = await IDB.open(); return new Promise(res => { const t = db.transaction('s', 'readwrite'); t.objectStore('s').delete(id); t.oncomplete = res; t.onerror = res; }); },
+  async clear() { const db = await IDB.open(); return new Promise(res => { const t = db.transaction('s', 'readwrite'); t.objectStore('s').clear(); t.oncomplete = res; t.onerror = res; }); }
+};
+async function loadSnd() {
+  try {
+    const leg = rd(LSSND, []);
+    for (const x of leg) { const b = await (await fetch(x.data)).blob(); await IDB.put({ id: x.id, name: x.name, blob: b }); }
+    if (leg.length) localStorage.removeItem(LSSND);
+    SND = (await IDB.all()).map(x => ({ id: x.id, name: x.name, data: URL.createObjectURL(x.blob) })); render();
+  } catch (e) { }
+}
+setTimeout(loadSnd, 0);
+
+/* ====== الجسر الأصلي (أندرويد) ====== */
+const NATIVE = !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform());
+const NP = n => Capacitor.registerPlugin(n);
+let NSOK = false, nsT = null;
+const hash32 = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return Math.abs(h) % 2147483000 + 1; };
+const CHANS = { prayer: ['الصلوات', 'prayer_bell'], task: ['مهامي (منبّه)', 'task_alarm'], routine: ['الفقرات الروتينية', 'routine_soft'], pre: ['تنبيه قبل الموعد', 'pre_chime'] };
+const chanOf = a => /\|p\|/.test(a.id) ? 'prayer' : (a.taskId && !a.pre) ? 'task' : (a.pre || /\|pre\|/.test(a.id)) ? 'pre' : 'routine';
+const ext = u => { if (NATIVE) { NP('AsadNative').openUri({ url: u }).catch(() => { }); } else if (/^intent:/.test(u)) location.href = u; else window.open(u, '_blank'); };
+async function pickOne() {
+  if (NATIVE) { const r = await NP('AsadNative').pickContact(); return { name: r.name || '', tel: r.tel || '' }; }
+  const r = await navigator.contacts.select(['name', 'tel'], { multiple: false }); return r && r[0] ? { name: (r[0].name || [])[0] || '', tel: (r[0].tel || [])[0] || '' } : null;
+}
+async function nativeInit() {
+  if (!NATIVE) return;
+  try {
+    const LN = NP('LocalNotifications');
+    for (const [id, [name, snd]] of Object.entries(CHANS)) await LN.createChannel({ id: 'a_' + id, name, description: name, importance: 5, visibility: 1, sound: snd + '.wav', vibration: true, lights: true });
+    const p = await LN.checkPermissions(); if (p.display !== 'granted') await LN.requestPermissions();
+    LN.addListener('localNotificationActionPerformed', e => { const x = ((e || {}).notification || {}).extra || {}; if (x.taskId) openTaskAct(x.taskId); else if (x.plan) openReview(); });
+    if (!ST.settings.exactAsked) { ST.settings.exactAsked = 1; save(); try { const ex = await LN.checkExactNotificationSetting(); if (ex.exact_alarm !== 'granted') LN.changeExactNotificationSetting(); } catch (e) { } }
+    nativeSync();
+  } catch (e) { }
+}
+function nativeSyncSoon() { if (!NATIVE) return; clearTimeout(nsT); nsT = setTimeout(nativeSync, 1500); }
+async function nativeSync() {
+  if (!NATIVE) return;
+  try {
+    const LN = NP('LocalNotifications'), now = Date.now(), seen = new Set(), list = [];
+    for (let i = 0; i < 3; i++) for (const a of alertsFor(addDays(TODAY(), i))) { if (a.at <= now + 3000 || seen.has(a.id)) continue; seen.add(a.id); list.push({ id: hash32(a.id), title: a.title, body: a.body || '', channelId: 'a_' + chanOf(a), schedule: { at: new Date(a.at), allowWhileIdle: true }, extra: { taskId: a.taskId || null, plan: !!a.plan } }); }
+    const pend = await LN.getPending(); if (pend.notifications.length) await LN.cancel({ notifications: pend.notifications.map(n => ({ id: n.id })) });
+    for (let i = 0; i < list.length; i += 40) await LN.schedule({ notifications: list.slice(i, i + 40) });
+    NSOK = true;
+  } catch (e) { NSOK = false; }
+}
+class NativeSR {
+  constructor() { this.lang = 'ar-SA'; this.on = false; this.last = ''; }
+  fire(t, fin) { this.onresult && this.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: t }], { isFinal: fin })] }); }
+  cleanup() { try { this.h1 && this.h1.remove(); this.h2 && this.h2.remove(); } catch (e) { } this.h1 = this.h2 = null; this.on = false; }
+  async start() {
+    const SP = NP('SpeechRecognition');
+    try {
+      const p = await SP.requestPermissions(); if (p.speechRecognition === 'denied') { this.onerror && this.onerror({ error: 'not-allowed' }); return; }
+      this.on = true; this.last = '';
+      this.h1 = await SP.addListener('partialResults', d => { const t = (d.matches || [])[0]; if (t) { this.last = t; this.fire(t, false); } });
+      this.h2 = await SP.addListener('listeningState', d => { if (d.status === 'stopped' && this.on) { if (this.last) this.fire(this.last, true); this.last = ''; this.cleanup(); this.onend && this.onend(); } });
+      await SP.start({ language: this.lang, maxResults: 1, partialResults: true, popup: false });
+    } catch (e) { this.cleanup(); this.onerror && this.onerror({ error: 'x' }); this.onend && this.onend(); }
+  }
+  stop() { this.cleanup(); try { NP('SpeechRecognition').stop(); } catch (e) { } }
+}
+
 if (!ST.settings.lnV3) { if (!ST.links.some(l => l.kind === 'learn')) ST.links.push({ id: 'l4', name: 'يوتيوب', url: 'https://www.youtube.com/', kind: 'learn' }); ST.settings.lnV3 = 1; }
 if (!ST.settings.wirdV2) { ST.wird.pace = 0; ST.settings.wirdV2 = 1; }
 if (!ST.settings.soundV2) { ST.settings.sounds.task = 'urgent'; ST.settings.soundV2 = 1; }
 let saveT = null;
-function save() { clearTimeout(saveT); saveT = setTimeout(() => { pruneDone(); wr(LS, ST); }, 250); }
+function save() { clearTimeout(saveT); saveT = setTimeout(() => { pruneDone(); wr(LS, ST); nativeSyncSoon(); }, 250); }
 function pruneDone() {
   const t = TODAY();
   for (const k of Object.keys(ST.done)) if (diffDays(k, t) > 45) delete ST.done[k];
   for (const k of Object.keys(ST.dayType)) if (diffDays(k, t) > 45) delete ST.dayType[k];
   for (const k of Object.keys(ST.dayOpt || {})) if (diffDays(k, t) > 45) delete ST.dayOpt[k];
+  for (const k of Object.keys(ST.doneAt || {})) if (diffDays(k, t) > 45) delete ST.doneAt[k];
+  ST.taskLog = (ST.taskLog || []).filter(x => diffDays(x.done, t) <= 60).slice(-400);
   for (const k of Object.keys(ST.skillLog)) if (diffDays(k, t) > 120) delete ST.skillLog[k];
   ST.chat = ST.chat.slice(-30);
 }
@@ -662,8 +733,8 @@ function waLink(p, text) {
   if (pkg && /android/i.test(navigator.userAgent)) return { intent: true, url: `intent://send?phone=${w}${text ? '&text=' + encodeURIComponent(text) : ''}#Intent;scheme=whatsapp;package=${pkg};S.browser_fallback_url=${encodeURIComponent(web)};end` };
   return { url: web };
 }
-const openWA = (p, text) => { const l = waLink(p, text); if (!l) return; if (l.intent) location.href = l.url; else window.open(l.url, '_blank'); };
-const openTel = p => { const w = waNum(p); if (w) location.href = 'tel:+' + w; };
+const openWA = (p, text) => { const l = waLink(p, text); if (!l) return; ext(l.url); };
+const openTel = p => { const w = waNum(p); if (w) ext('tel:+' + w); };
 function findContact(name) {
   const n = normAr(name || ''); if (!n) return null;
   const pool = [...(ST.contacts || []), ...ST.family.map(f => ({ name: f.name, phone: f.phone })), ...ST.suppliers.map(f => ({ name: f.name, phone: /\d{7,}/.test(f.contact || '') ? f.contact : '' }))];
@@ -692,10 +763,10 @@ function fire(a) {
     acts.push({ label: 'بعد ١٠ د', fn: () => { stopRing(); SNZ.push({ ...a, at: Date.now() + 600000, id: a.id + '|z' + Date.now() }); } });
   }
   const nOk = ('Notification' in window) && Notification.permission === 'granted';
-  if ((cfg().soundSource || 'app') === 'app' || !nOk) startRing(a.sound, a.taskId && !a.pre ? 5 : (a.loop ? 3 : 1));
+  if (!(NATIVE && NSOK) && ((cfg().soundSource || 'app') === 'app' || !nOk)) startRing(a.sound, a.taskId && !a.pre ? 5 : (a.loop ? 3 : 1));
   try { navigator.vibrate && navigator.vibrate([400, 150, 400, 150, 400]); } catch (e) { }
   showToast({ title: a.title, body: a.body, actions: acts });
-  notify(a);
+  if (!(NATIVE && NSOK)) notify(a);
 }
 function alertsFor(k) {
   const c = cfg(), D = dayFor(k), P = D.prayers, out = [];
@@ -807,7 +878,7 @@ function md(t) {
 
 /* ====== الصوت (إملاء) ====== */
 let voiceTarget = null, listening = false, SR = null, voiceBtn = null;
-const SRC = () => window.SpeechRecognition || window.webkitSpeechRecognition;
+const SRC = () => NATIVE ? NativeSR : (window.SpeechRecognition || window.webkitSpeechRecognition);
 const micAvail = () => !!DICT || !!SRC();
 function setMic(on) { $$('.mic').forEach(b => b.classList.toggle('mic-on', on && b === voiceBtn)); }
 function appendVoice(t) {
@@ -907,7 +978,8 @@ function closeSheet() { $$('.scrim').forEach(e => e.remove()); }
 
 function toggleBlock(k, key) {
   const d = (ST.done[k] = ST.done[k] || {}), to = !d[key];
-  if (to) d[key] = true; else delete d[key];
+  const da = (ST.doneAt[k] = ST.doneAt[k] || {});
+  if (to) { d[key] = true; da[key] = NOW().min; } else { delete d[key]; delete da[key]; }
   if (key === 'wird') {
     const w = ST.wird;
     if (to) { if (!w.days[k]) { w.days[k] = { from: w.pos }; w.pos = Math.min(60, w.pos + w.pace); } } else if (w.days[k]) { w.pos = w.days[k].from; delete w.days[k]; }
@@ -918,6 +990,7 @@ function addMonth(k) { const { y, m, d } = parseKey(k), dt = new Date(Date.UTC(y
 function toggleTask(id, force) {
   const t = ST.tasks.find(x => x.id === id); if (!t) return;
   const to = force != null ? force : !t.done, today = TODAY();
+  if (to) (ST.taskLog = ST.taskLog || []).push({ title: t.title, date: t.date, time: t.time, done: today, min: NOW().min, cat: t.cat });
   if (to && t.repeat && t.repeat !== 'none') {
     const bs = t.date && t.date >= today ? t.date : today; t.date = t.repeat === 'monthly' ? addMonth(bs) : addDays(bs, t.repeat === 'daily' ? 1 : 7); t.lastDone = today;
     say(`تم. ستتكرر ${t.repeat === 'daily' ? 'غداً' : t.repeat === 'monthly' ? 'الشهر القادم' : 'الأسبوع القادم'}`);
@@ -956,8 +1029,9 @@ const LK_KINDS = [['adhkar', 'أذكار'], ['quran', 'قرآن'], ['tafsir', '�
 const playId = u => { const m = /play\.google\.com\/store\/apps\/details\?[^#]*\bid=([\w.]+)/i.exec(u || ''); return m ? m[1] : ''; };
 function launchLink(l) {
   const pkg = l.pkg || playId(l.url);
+  if (NATIVE && pkg) { NP('AsadNative').launch({ pkg }).catch(() => ext('https://play.google.com/store/apps/details?id=' + pkg)); return; }
   if (pkg && /android/i.test(navigator.userAgent)) { const fb = l.url && /^https?:/i.test(l.url) ? l.url : 'https://play.google.com/store/apps/details?id=' + pkg; location.href = `intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=${pkg};S.browser_fallback_url=${encodeURIComponent(fb)};end`; }
-  else if (l.url) window.open(l.url, '_blank'); else say('أضف رابطاً أو اسم حزمة لهذا التطبيق', 'warn');
+  else if (l.url) ext(l.url); else say('أضف رابطاً أو اسم حزمة لهذا التطبيق', 'warn');
 }
 function launchKind(kind) { const L = (ST.links || []).filter(x => x.kind === kind); if (L.length === 1) return launchLink(L[0]); openLinks(kind); }
 function linksCard() {
@@ -982,9 +1056,9 @@ function openExtAlert(id) {
   if (!t.time) return say('حدّد وقتاً للمهمة أولاً', 'warn');
   const [st, en] = taskTimes(t), gc = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(t.title)}&dates=${st}/${en}&details=${encodeURIComponent('من مساعد الأسد')}`;
   openSheet(`<h2 class="h2">تنبيه خارجي: ${esc(t.title)}</h2><div class="small muted" style="margin-bottom:10px">${t.date || TODAY()} · ${fmt12(toMin(t.time))}. يرنّ بنغمة الجوال حتى لو أُغلق التطبيق.</div>
-  <div class="gap"><a class="btn block" style="text-decoration:none" target="_blank" rel="noopener" href="${gc}">${ic('day')} إضافة إلى تقويم قوقل</a>
+  <div class="gap"><button class="btn block" data-act="extgo" data-u="${esc(gc)}">${ic('day')} إضافة إلى تقويم قوقل</button>
   <button class="btn ghost block" data-act="icsdl" data-id="${id}">${ic('copy')} ملف تقويم (.ics) يُفتح بتطبيق التقويم</button>
-  <a class="btn ghost block" style="text-decoration:none" href="${alarmLink(t)}">${ic('bell')} منبّه الساعة (قد لا يعمل على بعض الأجهزة)</a></div>`);
+  <button class="btn ghost block" data-act="extgo" data-u="${esc(alarmLink(t))}">${ic('bell')} منبّه الساعة</button></div>`);
 }
 let famG = 'all';
 const gName = g => g || 'غير مصنّف';
@@ -1017,7 +1091,7 @@ function openGroups() {
   ${fld('قائمة جديدة', '<input id="grp-new" type="text" placeholder="مثال: زملاء العمل">')}<button class="btn block" data-act="grpadd">${ic('plus')} إضافة قائمة</button>`);
 }
 async function importInto(g) {
-  try { const r = await navigator.contacts.select(['name', 'tel'], { multiple: true }); let n = 0; for (const c of r || []) { const name = (c.name || [])[0] || '', ph = (c.tel || [])[0] || ''; if (!name || ST.family.some(f => normAr(f.name) === normAr(name) && waNum(f.phone) === waNum(ph))) continue; ST.family.push({ id: uid(), name, rel: '', freq: 7, last: null, phone: ph, group: g }); n++; } save(); render(); say(n ? `أُضيف ${n} إلى ${g || 'غير مصنّف'}` : 'لا جهات جديدة'); } catch (e) { say('استيراد الجهات غير مدعوم هنا', 'warn'); }
+  try { const r = NATIVE ? await pickOne().then(x => x ? [{ name: [x.name], tel: [x.tel] }] : []) : await navigator.contacts.select(['name', 'tel'], { multiple: true }); let n = 0; for (const c of r || []) { const name = (c.name || [])[0] || '', ph = (c.tel || [])[0] || ''; if (!name || ST.family.some(f => normAr(f.name) === normAr(name) && waNum(f.phone) === waNum(ph))) continue; ST.family.push({ id: uid(), name, rel: '', freq: 7, last: null, phone: ph, group: g }); n++; } save(); render(); say(n ? `أُضيف ${n} إلى ${g || 'غير مصنّف'}` : 'لا جهات جديدة'); } catch (e) { say('استيراد الجهات غير مدعوم هنا', 'warn'); }
 }
 const PLAN_ITEMS = [
   ['الشغل والموردون', 'تواصل مع مصنع أو مورّد', 'of', 'work'], ['الشغل والموردون', 'طلب كتالوج وقائمة أسعار', 'of', 'work'], ['الشغل والموردون', 'طلب وكالة أو توزيع', 'of', 'work'], ['الشغل والموردون', 'تواصل مع مقاول', 'of', 'work'], ['الشغل والموردون', 'تواصل مع عميل جديد', 'of', 'work'], ['الشغل والموردون', 'متابعة عرض سعر لعميل', 'of', 'work'], ['الشغل والموردون', 'طلب خامات ومواد', 'of', 'work'],
@@ -1117,7 +1191,95 @@ function tipsCard(k, n) {
   if (ds) T.push([`${ds} مورّد تحتاج متابعتهم`, 'المصانع', 'gosup']);
   return T.length ? sec('المساعد يقترح', 'ai', T.slice(0, 4).map(([t, b, a]) => `<div class="row" style="padding:6px 0"><div class="grow small">${esc(t)}</div><button class="btn sm" data-act="${a}">${b}</button></div>`).join('')) : '';
 }
-const hasPicker = () => !!(navigator.contacts && navigator.contacts.select);
+const xe = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const PEND = { fajr: 'sunrise', dhuhr: 'asr', asr: 'maghrib', maghrib: 'isha' };
+function blkStatus(b, d, tm, k, nowMin, today, P) {
+  const end = b.prayer ? (PEND[b.prayer] ? P[PEND[b.prayer]] : 1439) : b.t + 30;
+  if (d) { if (tm == null) return ['ok', 'تمت']; if (b.prayer) return tm <= b.t + 30 ? ['good', 'أول الوقت'] : tm <= end ? ['ok', `في الوقت (بعد ${tm - b.t} د)`] : ['bad', 'بعد خروج الوقت']; return tm <= b.t + 30 ? ['good', 'في موعدها'] : ['ok', `متأخرة ${tm - b.t} د`]; }
+  if (k < (ST.trackFrom || today)) return ['pend', 'غير مسجّل'];
+  return (k < today || (k === today && nowMin > end)) ? ['bad', 'لم تتم'] : ['pend', 'لم يحن بعد'];
+}
+function reportData(n) {
+  const today = TODAY(), nowMin = NOW().min, days = []; let tot = 0, ok = 0, prayers = 0, pFirst = 0, pOn = 0, pMiss = 0, wirdMiss = 0; const attention = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const k = addDays(today, -i), D = dayFor(k), P = D.prayers, dn = ST.done[k] || {}, da = ST.doneAt[k] || {}, rows = [];
+    for (const b of D.blocks) {
+      if (b.info || b.optional || b.span) continue;
+      const st = blkStatus(b, !!dn[b.key], da[b.key], k, nowMin, today, P);
+      rows.push({ b, st, tm: da[b.key] });
+      if (st[0] !== 'pend') { tot++; if (st[0] !== 'bad') ok++; }
+      if (b.prayer && st[0] !== 'pend') { prayers++; if (st[0] === 'good') pFirst++; if (st[0] === 'good' || st[0] === 'ok') pOn++; if (st[0] === 'bad') pMiss++; }
+      if (b.key === 'wird' && st[0] === 'bad') wirdMiss++;
+    }
+    days.push({ k, type: typeLabel(k), rows });
+  }
+  const from = addDays(today, -(n - 1)), log = (ST.taskLog || []).filter(x => x.done >= from && x.done <= today);
+  const tdone = log.map(x => { const late = x.done > (x.date || x.done) || (x.date === x.done && x.time && x.min > toMin(x.time) + 15); return { ...x, late }; });
+  const over = ST.tasks.filter(t => !t.done && t.date && t.date < today), pendToday = ST.tasks.filter(t => !t.done && t.date === today);
+  if (pMiss) attention.push(`فاتتك ${pMiss} صلاة بعد خروج وقتها أو لم تُسجَّل`);
+  if (over.length) attention.push(`${over.length} مهمة متأخرة لم تُنجز`);
+  if (wirdMiss) attention.push(`ورد القرآن لم يُسجَّل في ${wirdMiss} يوم`);
+  const cl = ST.clients.filter(c => clActive(c) && c.next && c.next <= today); if (cl.length) attention.push('عملاء ينتظرون متابعتك: ' + cl.map(c => c.name).join('، '));
+  const df = dueFamily(); if (df.length) attention.push('أهل وأصدقاء حان التواصل معهم: ' + df.slice(0, 6).map(f => f.name).join('، '));
+  const ds = dueSup(); if (ds.length) attention.push('موردون تحتاج متابعتهم: ' + ds.slice(0, 6).map(x => x.name).join('، '));
+  return { n, today, days, tdone, over, pendToday, attention, tot, ok, prayers, pFirst, pOn, pMiss, wirdMiss };
+}
+function reportInner(R) {
+  const col = { good: '#0a7a4a', ok: '#8a6d00', bad: '#b3261e', pend: '#667' }, pct = R.tot ? Math.round(R.ok * 100 / R.tot) : 0;
+  const sum = (a, b) => `<div class="bx"><b>${a}</b><span>${b}</span></div>`;
+  let h = `<style>.rp{font-family:'Noto Sans Arabic','Segoe UI',Tahoma,sans-serif;color:#1a2b28;background:#fff;padding:36px;font-size:15px;line-height:1.7;direction:rtl}.rp h1{font-size:28px;margin:0 0 4px;color:#0f6b5c}.rp h2{font-size:19px;margin:22px 0 8px;color:#0f6b5c;border-bottom:2px solid #c9a24a;padding-bottom:3px}.rp h3{font-size:16px;margin:14px 0 4px}.rp table{width:100%;border-collapse:collapse;font-size:13.5px}.rp td,.rp th{border:1px solid #d5dedb;padding:4px 7px;text-align:right}.rp th{background:#eef5f3}.bxs{display:flex;gap:8px;flex-wrap:wrap}.bx{flex:1;min-width:110px;border:1px solid #d5dedb;border-radius:10px;padding:8px;text-align:center}.bx b{display:block;font-size:22px;color:#0f6b5c}.bx span{font-size:12.5px;color:#556}.att li{margin:3px 0}</style><div class="rp">`;
+  h += `<h1>تقرير الإنجاز — مساعد الأسد</h1><div>${R.n === 1 ? 'اليوم' : 'آخر ' + R.n + ' يوماً'} · حتى ${R.today}</div>`;
+  h += `<h2>الملخص</h2><div class="bxs">${sum(pct + '٪', 'نسبة إنجاز الفقرات')}${sum(R.pFirst + ' / ' + R.prayers, 'صلوات أول الوقت')}${sum(R.pOn + ' / ' + R.prayers, 'صلوات في وقتها')}${sum(R.pMiss, 'صلوات فاتت')}${sum(R.tdone.length, 'مهام أنجزتها')}${sum(R.over.length, 'مهام متأخرة')}</div>`;
+  h += `<h2>ما يحتاج اهتماماً</h2>${R.attention.length ? `<ul class="att">${R.attention.map(x => `<li>${xe(x)}</li>`).join('')}</ul>` : '<div>لا شيء عاجل، بارك الله فيك.</div>'}`;
+  h += `<h2>الفقرات الروتينية والصلوات</h2>`;
+  for (const d of R.days) {
+    h += `<h3>${xe(relDate(d.k, R.today))} · ${d.k} · ${xe(d.type)}</h3>`;
+    const rows = R.n > 7 ? d.rows.filter(r => r.st[0] === 'bad' || r.st[0] === 'ok') : d.rows;
+    if (!rows.length) { h += `<div style="color:#0a7a4a">كل شيء في موعده</div>`; continue; }
+    h += `<table><tr><th>الفقرة</th><th>الموعد</th><th>سُجّلت</th><th>الحالة</th></tr>${rows.map(r => `<tr><td>${xe(r.b.title)}</td><td>${fmt12(r.b.t)}</td><td>${r.tm != null ? fmt12(r.tm) : '—'}</td><td style="color:${col[r.st[0]]};font-weight:700">${xe(r.st[1])}</td></tr>`).join('')}</table>`;
+  }
+  h += `<h2>المهام</h2>`;
+  if (R.tdone.length) h += `<h3>أنجزتها</h3><table><tr><th>المهمة</th><th>موعدها</th><th>أُنجزت</th><th>الحالة</th></tr>${R.tdone.map(x => `<tr><td>${xe(x.title)}</td><td>${xe(x.date || '—')} ${x.time ? fmt12(toMin(x.time)) : ''}</td><td>${xe(x.done)} ${fmt12(x.min)}</td><td style="color:${x.late ? col.ok : col.good};font-weight:700">${x.late ? 'متأخرة' : 'في موعدها'}</td></tr>`).join('')}</table>`;
+  if (R.over.length) h += `<h3>متأخرة لم تُنجز</h3><table><tr><th>المهمة</th><th>موعدها</th></tr>${R.over.map(t => `<tr><td>${xe(t.title)}</td><td style="color:${col.bad}">${xe(t.date)} ${t.time ? fmt12(toMin(t.time)) : ''}</td></tr>`).join('')}</table>`;
+  if (R.pendToday.length) h += `<h3>مهام اليوم المتبقية</h3><table><tr><th>المهمة</th><th>الوقت</th></tr>${R.pendToday.map(t => `<tr><td>${xe(t.title)}</td><td>${t.time ? fmt12(toMin(t.time)) : '—'}</td></tr>`).join('')}</table>`;
+  if (!R.tdone.length && !R.over.length && !R.pendToday.length) h += '<div>لا مهام مسجلة في هذه الفترة.</div>';
+  h += `<div style="margin-top:20px;font-size:12px;color:#778">التوقيتات المسجلة تبدأ من تاريخ تفعيل هذه الميزة؛ الأيام السابقة تظهر «تمت» بلا وقت.</div></div>`;
+  return h;
+}
+function makePdf(jpgs, pw, ph) {
+  const enc = new TextEncoder(), parts = [], offs = []; let off = 0;
+  const push = b => { const u = typeof b === 'string' ? enc.encode(b) : b; parts.push(u); off += u.length; };
+  const obj = (i, body) => { offs[i] = off; push(`${i} 0 obj\n`); push(body); push('\nendobj\n'); };
+  const n = jpgs.length, PW = 595.28, PH = 841.89; push('%PDF-1.4\n');
+  obj(1, '<< /Type /Catalog /Pages 2 0 R >>'); obj(2, `<< /Type /Pages /Kids [${jpgs.map((_, i) => `${3 + 3 * i} 0 R`).join(' ')}] /Count ${n} >>`);
+  jpgs.forEach((j, i) => { const pg = 3 + 3 * i, c = `q ${PW} 0 0 ${PH} 0 0 cm /Im0 Do Q`; obj(pg, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PW} ${PH}] /Contents ${pg + 1} 0 R /Resources << /XObject << /Im0 ${pg + 2} 0 R >> >> >>`); obj(pg + 1, `<< /Length ${c.length} >>\nstream\n${c}\nendstream`); offs[pg + 2] = off; push(`${pg + 2} 0 obj\n<< /Type /XObject /Subtype /Image /Width ${pw} /Height ${ph} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${j.length} >>\nstream\n`); push(j); push('\nendstream\nendobj\n'); });
+  const xr = off, total = 3 + 3 * n; let x = `xref\n0 ${total}\n0000000000 65535 f \n`; for (let i = 1; i < total; i++) x += String(offs[i]).padStart(10, '0') + ' 00000 n \n';
+  push(x + `trailer\n<< /Size ${total} /Root 1 0 R >>\nstartxref\n${xr}\n%%EOF`); return new Blob(parts, { type: 'application/pdf' });
+}
+async function htmlToPdf(inner) {
+  const W = 794, H = 1123, S = 2, host = document.createElement('div'); host.style.cssText = `position:fixed;left:-9999px;top:0;width:${W}px;`; host.innerHTML = inner; document.body.append(host);
+  const total = Math.max(H, host.scrollHeight + 4), pages = Math.min(40, Math.ceil(total / H)); host.remove(); const jpgs = [];
+  for (let p = 0; p < pages; p++) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}"><foreignObject x="0" y="${-p * H}" width="${W}" height="${total}"><div xmlns="http://www.w3.org/1999/xhtml" style="width:${W}px;direction:rtl;background:#fff">${inner}</div></foreignObject></svg>`;
+    const img = new Image(); await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('svg')); img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+    const cv = document.createElement('canvas'); cv.width = W * S; cv.height = H * S; const cx = cv.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(img, 0, 0, cv.width, cv.height);
+    const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.88)); jpgs.push(new Uint8Array(await blob.arrayBuffer()));
+  }
+  return makePdf(jpgs, W * S, H * S);
+}
+async function savePdf(blob, name) {
+  if (NATIVE) { const b64 = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(String(fr.result).split(',')[1]); fr.readAsDataURL(blob); }); const w = await NP('Filesystem').writeFile({ path: name, data: b64, directory: 'CACHE' }); await NP('Share').share({ title: name, url: w.uri, dialogTitle: 'حفظ أو مشاركة التقرير' }); return; }
+  if (DL) { try { await DL.save({ filename: name, data: blob }); return; } catch (e) { if (e && e.code === 'declined') return; } }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.append(a); a.click(); a.remove();
+}
+let RP_N = 7;
+function openReport(n) {
+  RP_N = n || RP_N; const R = reportData(RP_N), pct = R.tot ? Math.round(R.ok * 100 / R.tot) : 0;
+  openSheet(`<h2 class="h2">تقرير الإنجاز</h2><div class="chips">${[[1, 'اليوم'], [7, '٧ أيام'], [30, '٣٠ يوماً']].map(([v, l]) => `<button class="chip ${RP_N === v ? 'on' : ''}" data-act="reportn" data-v="${v}">${l}</button>`).join('')}</div>
+  <div class="card gap"><div>إنجاز الفقرات: <b>${pct}٪</b> · صلوات أول الوقت: <b>${R.pFirst}/${R.prayers}</b> · فاتت: <b>${R.pMiss}</b></div><div>مهام أنجزتها: <b>${R.tdone.length}</b> · متأخرة: <b>${R.over.length}</b></div>${R.attention.map(x => `<div class="small">• ${esc(x)}</div>`).join('')}</div>
+  <button class="btn block" id="rpbtn" data-act="reportgo">${ic('copy')} إنشاء PDF ومشاركته</button><div class="note">التوقيتات تُسجَّل منذ هذه النسخة، وما قبلها يظهر بلا وقت.</div>`);
+}
+const hasPicker = () => NATIVE || !!(navigator.contacts && navigator.contacts.select);
 const alarmLink = t => { const [h, m] = (t.time || '00:00').split(':').map(Number); return `intent:#Intent;action=android.intent.action.SET_ALARM;i.android.intent.extra.alarm.HOUR=${h};i.android.intent.extra.alarm.MINUTES=${m};S.android.intent.extra.alarm.MESSAGE=${encodeURIComponent(t.title)};end`; };
 function notifCard() {
   if (!('Notification' in window)) return ''; const p = Notification.permission; if (p === 'granted') return '';
@@ -1178,6 +1340,7 @@ function vToday() {
   ${notifCard()}
   ${tipsCard(k, n)}
   <div class="row wrap"><button class="btn ghost grow" data-act="planopen" data-d="today">${ic('plus')} مهام اليوم</button><button class="btn ghost grow" data-act="reviewopen">${ic('check')} مراجعة اليوم</button><button class="btn ghost grow" data-act="cliopen" data-id="">${ic('plus')} زارني عميل</button></div>
+  <button class="btn ghost block" data-act="reportopen">${ic('copy')} تقرير الإنجاز (PDF)</button>
   ${tripCard}
   <section class="card"><h2>${ic('day')}<span>برنامج اليوم</span></h2><div class="tl">${rows}</div><div class="note" style="margin-top:8px">أوقات الصلوات محسوبة (أم القرى) وتتحرك معها بقية الفقرات. عدّل الأوقات الثابتة من الإعدادات.</div></section>
   ${sec('مهام اليوم', 'tasks', todayTasks.length ? `<div class="gap">${todayTasks.map(t => taskRow(t, k)).join('')}</div>` : empty('tasks', 'لا توجد مهام لليوم', 'اضغط «المهام» وأضف بالكتابة أو الصوت'), `<button class="btn sm ghost" data-act="goto" data-v="tasks">إضافة</button>`)}
@@ -1426,6 +1589,10 @@ function vSettings() {
     ${fld('نوع جمعة الإجازة الافتراضي', selb('settings.friOffDefault', FMODES))}
     <div class="grid2">${fld('انطلاق الخرجة بعد الغداء', inp('settings.friTripTime', 'time'))}${fld('انطلاق الخرجة الصباحية', inp('settings.friOut', 'time'))}</div>
     ${fld('بدء تجهيز الغداء (للخرجة الصباحية)', inp('settings.friPrep', 'time'))}</section>
+  ${NATIVE ? `<section class="card gap"><h2>${ic('bell')}<span>نغمات الجوال والصلاحيات</span></h2><div class="small muted">اختر لكل فئة أي نغمة من نغمات جوالك أو من ملفاتك، فتفتح لك إعدادات الجوال.</div>
+    <div class="row wrap">${Object.entries(CHANS).map(([v, [l]]) => `<button class="btn sm ghost" data-act="natchan" data-v="${v}">${l}</button>`).join('')}</div>
+    <div class="row wrap"><button class="btn sm ghost" data-act="natexact">السماح بالتنبيهات الدقيقة</button><button class="btn sm ghost" data-act="natbatt">استثناء من توفير البطارية</button><button class="btn sm" data-act="nattest">تنبيه تجريبي</button></div></section>` : ''}
+  <section class="card gap"><h2>${ic('copy')}<span>تقرير الإنجاز</span></h2><div class="small muted">ملف PDF مفصّل بما أنجزته وما قصّرت فيه وما يحتاج اهتماماً.</div><button class="btn block" data-act="reportopen">إنشاء تقرير PDF</button></section>
   <section class="card gap"><h2>${ic('phone')}<span>الواتساب والتواصل</span></h2>
     ${fld('إرسال الرسائل عبر', selb('settings.waApp', WAOPTS))}
     ${fld('اسم حزمة تطبيق واتساب آخر (للخيار الأخير)', inp('settings.waPkg', 'text', 'dir="ltr" placeholder="com.whatsapp"'))}
@@ -1489,7 +1656,7 @@ const ACT = {
   },
   enotif: async () => { actx(); playOnce('soft'); try { if ('Notification' in window) { const r = await Notification.requestPermission(); say(r === 'granted' ? 'تم تفعيل الإشعارات' : 'لم يُسمح بالإشعارات، فعّلها من إعدادات المتصفح', r === 'granted' ? 'ok' : 'warn'); } } catch (e) { } render(); },
   testblock: () => fire({ id: 'tb' + Date.now(), title: 'تنبيه فقرة من البرنامج', body: 'هذا صوت الفقرات الروتينية', sound: cfg().sounds.block, loop: false }),
-  pickcon: async el => { try { const r = await navigator.contacts.select(['name', 'tel'], { multiple: false }); if (r && r[0]) { const n = $('#' + el.dataset.n), p = $('#' + el.dataset.p); if (n && !n.value) n.value = (r[0].name || [])[0] || ''; if (p) p.value = (r[0].tel || [])[0] || ''; } } catch (e) { say('اختيار جهات الاتصال غير مدعوم هنا، اكتب الرقم يدوياً', 'warn'); } },
+  pickcon: async el => { try { const r0 = await pickOne(), r = r0 ? [{ name: [r0.name], tel: [r0.tel] }] : null; if (r && r[0]) { const n = $('#' + el.dataset.n), p = $('#' + el.dataset.p); if (n && !n.value) n.value = (r[0].name || [])[0] || ''; if (p) p.value = (r[0].tel || [])[0] || ''; } } catch (e) { say('اختيار جهات الاتصال غير مدعوم هنا، اكتب الرقم يدوياً', 'warn'); } },
   tact: el => openTaskAct(el.dataset.id),
   tapp: el => { const t = ST.tasks.find(x => x.id === el.dataset.id); if (t) launchKind(t.appKind); },
   twa: el => { const t = ST.tasks.find(x => x.id === el.dataset.id); if (t) openWA(t.phone, t.waText); },
@@ -1508,7 +1675,7 @@ const ACT = {
   lkadd: () => { const name = $('#lk-name').value.trim(); let url = $('#lk-url').value.trim(); const pkg = $('#lk-pkg').value.trim(); if (!name || (!url && !pkg)) return say('اكتب الاسم والرابط أو اسم الحزمة', 'warn'); if (url && !/^(https?:|intent:|market:)/i.test(url)) url = 'https://' + url; const kind = $('#lk-kind').value; (ST.links = ST.links || []).push({ id: uid(), name, url, pkg, kind }); save(); openLinks(kind); render(); },
   lkgo: el => { const l = (ST.links || []).find(x => x.id === el.dataset.id); if (l) launchLink(l); },
   lkkind: el => launchKind(el.dataset.v),
-  wlog: el => { const k = TODAY(), w = ST.wird; w.log = w.log || {}; w.log[k] = el.dataset.v; (ST.done[k] = ST.done[k] || {}).wird = true; for (const x of Object.keys(w.log)) if (diffDays(x, k) > 30) delete w.log[x]; save(); render(); say('بارك الله فيك'); },
+  wlog: el => { const k = TODAY(), w = ST.wird; w.log = w.log || {}; w.log[k] = el.dataset.v; (ST.done[k] = ST.done[k] || {}).wird = true; (ST.doneAt[k] = ST.doneAt[k] || {}).wird = NOW().min; for (const x of Object.keys(w.log)) if (diffDays(x, k) > 30) delete w.log[x]; save(); render(); say('بارك الله فيك'); },
   wadv: () => { ST.wird.pos = Math.min(60, ST.wird.pos + 1); save(); render(); },
   reviewopen: () => openReview(),
   reviewsave: () => {
@@ -1525,12 +1692,12 @@ const ACT = {
   famimport: () => importInto(famG === 'all' ? 'الأهل' : famG),
   grpimp: el => importInto((ST.groups || [])[+el.dataset.i]),
   grpsave: el => { const i = +el.dataset.i, old = ST.groups[i], nn = $('#gn' + i).value.trim() || old, link = $('#gl' + i).value.trim(); if (nn !== old) { ST.groups[i] = nn; ST.family.forEach(f => { if (f.group === old) f.group = nn; }); if (famG === old) famG = nn; const gl = ST.gLinks || {}; delete gl[old]; if (ST.gmLast && ST.gmLast[old]) { ST.gmLast[nn] = ST.gmLast[old]; delete ST.gmLast[old]; } } (ST.gLinks = ST.gLinks || {})[nn] = link; save(); openGroups(); render(); say('تم الحفظ'); },
-  gmgrp: el => { const g = el.dataset.g, l = (ST.gLinks || {})[g]; if (!l) return; try { navigator.clipboard.writeText(($('#msgtxt').value || '').replace(/\{الاسم\}/g, '')); } catch (e) { } (ST.gmLast = ST.gmLast || {})[g] = TODAY(); save(); say('نُسخت الرسالة، الصقها في المجموعة'); window.open(l, '_blank'); },
+  gmgrp: el => { const g = el.dataset.g, l = (ST.gLinks || {})[g]; if (!l) return; try { navigator.clipboard.writeText(($('#msgtxt').value || '').replace(/\{الاسم\}/g, '')); } catch (e) { } (ST.gmLast = ST.gmLast || {})[g] = TODAY(); save(); say('نُسخت الرسالة، الصقها في المجموعة'); ext(l); },
   gmbcast: () => { try { navigator.clipboard.writeText(($('#msgtxt').value || '').replace(/\{الاسم\}/g, '')); } catch (e) { } say('نُسخت الرسالة، الصقها في قائمة البث'); const a = cfg().waApp; launchLink({ pkg: a === 'w4b' ? 'com.whatsapp.w4b' : a === 'custom' ? cfg().waPkg : (a === 'wa' ? 'com.whatsapp' : ''), url: 'https://wa.me/' }); },
   gmshare: async () => { const g = gmSel(); if (!g.length) say('اختر قائمة واحدة على الأقل', 'warn'); const text = GM.text.replace(/\{الاسم\}/g, '').trim(); if (!text) return;
     const done = () => { g.forEach(x => { (ST.gmLast = ST.gmLast || {})[x] = TODAY(); }); save(); };
     try { if (navigator.share) { await navigator.share({ text }); done(); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
-    try { await navigator.clipboard.writeText(text); } catch (e) { } window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank'); done(); },
+    try { await navigator.clipboard.writeText(text); } catch (e) { } ext('https://wa.me/?text=' + encodeURIComponent(text)); done(); },
   gmstart: () => { const g = gmSel(); if (!g.length) return say('اختر قائمة واحدة على الأقل', 'warn'); GM.q = ST.family.filter(f => g.includes(f.group || '') && waNum(f.phone)).map(f => f.id); if (!GM.q.length) return say('لا أرقام صالحة في القوائم المختارة', 'warn'); GM.i = 0; openGMQueue(); },
   gmnext: () => { const f = ST.family.find(x => x.id === GM.q[GM.i]); if (!f) return; openWA(f.phone, GM.text.replace(/\{الاسم\}/g, f.name)); f.last = TODAY(); GM.i++; save(); setTimeout(openGMQueue, 350); },
   gmskip: () => { GM.i++; openGMQueue(); },
@@ -1561,6 +1728,14 @@ const ACT = {
     save(); closeSheet(); render(); say(c.execDate ? 'حُفظ، وصار ' + relDate(c.execDate, today) + ' يوم تركيبات' : 'حُفظ وأُضيفت مهام المتابعة');
   },
   supideas: async el => { openSheet('<h2 class="h2">أفكار موردين جدد</h2><div id="sidea" class="md"><div class="muted small">جارٍ التفكير…</div></div>'); try { const t = await askAI([{ role: 'user', content: 'اقترح ٦ أنواع من المصانع أو الموردين أو الوكالات التي يحتاجها معرض ديكور وتركيب (بانوهات، جبس، باركيه، إضاءة، ستائر، رخام صناعي)، لكل نوع: ماذا أطلب منهم، وكلمات بحث أستخدمها في قوقل أو إنستقرام للوصول لهم، وسؤال مهم عن السعر والحد الأدنى. لا تخترع أسماء شركات أو أرقاماً.' }], 'أنت مساعد مشتريات لمعرض ديكور في السعودية. أجب بالعربية باختصار في نقاط.', { quick: true, max: 900 }); $('#sidea').innerHTML = md(t); } catch (e) { $('#sidea').textContent = errMsg(e); } },
+  extgo: el => ext(el.dataset.u),
+  reportopen: () => openReport(),
+  reportn: el => openReport(+el.dataset.v),
+  reportgo: async el => { el.disabled = true; const o = el.innerHTML; el.textContent = 'جارٍ إنشاء التقرير…'; try { const blob = await htmlToPdf(reportInner(reportData(RP_N))); await savePdf(blob, `asad-report-${TODAY()}.pdf`); say('تم إنشاء التقرير'); } catch (e) { say('تعذّر إنشاء PDF: ' + (e && e.message || ''), 'warn'); } el.disabled = false; el.innerHTML = o; },
+  natchan: el => NP('AsadNative').channelSettings({ id: 'a_' + el.dataset.v }).catch(() => say('تعذّر فتح الإعدادات', 'warn')),
+  natexact: () => { try { NP('LocalNotifications').changeExactNotificationSetting(); } catch (e) { } },
+  natbatt: () => NP('AsadNative').batteryOpt().catch(() => { }),
+  nattest: async () => { try { const LN = NP('LocalNotifications'); await LN.schedule({ notifications: [{ id: 7001, title: 'تنبيه تجريبي لمهامي', body: 'بنغمة المهام', channelId: 'a_task', schedule: { at: new Date(Date.now() + 10000), allowWhileIdle: true } }, { id: 7002, title: 'تنبيه تجريبي للصلاة', body: 'بنغمة الصلوات', channelId: 'a_prayer', schedule: { at: new Date(Date.now() + 20000), allowWhileIdle: true } }] }); say('ستصلك تنبيهات تجريبية بعد ١٠ و٢٠ ثانية. اخرج من التطبيق لتجربها'); } catch (e) { say('تعذّر الجدولة', 'warn'); } },
   planopen: el => openPlan(el.dataset.d),
   plansave: el => {
     const k = PLAN.k, add = [];
@@ -1597,7 +1772,7 @@ const ACT = {
   skilldone: () => { const k = TODAY(); if (ST.skillLog[k]) delete ST.skillLog[k]; else ST.skillLog[k] = true; save(); render(); },
   mic: el => micClick(el.dataset.for, el),
   testsnd: el => startRing(el.dataset.v in SOUND_NAMES || el.dataset.v.startsWith('c:') ? el.dataset.v : cfg().sounds[el.dataset.v], 1),
-  sndel: el => { SND = SND.filter(x => x.id !== el.dataset.id); wr(LSSND, SND); for (const k in cfg().sounds) if (cfg().sounds[k] === el.dataset.id) cfg().sounds[k] = 'bell'; save(); render(); },
+  sndel: el => { SND = SND.filter(x => x.id !== el.dataset.id); IDB.del(el.dataset.id); for (const k in cfg().sounds) if (cfg().sounds[k] === el.dataset.id) cfg().sounds[k] = 'bell'; save(); render(); },
   notifperm: () => { try { Notification.requestPermission().then(() => render()); } catch (e) { } },
   testalert: () => fire({ id: 'test' + Date.now(), title: 'هذا تنبيه تجريبي', body: 'إن سمعت الصوت فكل شيء يعمل', sound: cfg().sounds.task, loop: false }),
   wirddone: () => toggleBlock(TODAY(), 'wird'),
@@ -1661,14 +1836,13 @@ const ACT = {
     el.disabled = false; el.innerHTML = old;
   },
   export: () => exportData(),
-  reset: el => { if (el.dataset.sure) { ST = JSON.parse(JSON.stringify(DEF)); wr(LS, ST); SND = []; wr(LSSND, SND); applyTheme(); go('today'); say('تم المسح'); } else { el.dataset.sure = 1; el.textContent = 'اضغط مرة أخرى للتأكيد'; setTimeout(() => { if (el.isConnected) { delete el.dataset.sure; el.textContent = 'مسح كل البيانات'; } }, 4000); } }
+  reset: el => { if (el.dataset.sure) { ST = JSON.parse(JSON.stringify(DEF)); wr(LS, ST); SND = []; IDB.clear(); wr(LSSND, []); applyTheme(); go('today'); say('تم المسح'); } else { el.dataset.sure = 1; el.textContent = 'اضغط مرة أخرى للتأكيد'; setTimeout(() => { if (el.isConnected) { delete el.dataset.sure; el.textContent = 'مسح كل البيانات'; } }, 4000); } }
 };
 document.addEventListener('click', e => { const el = e.target.closest('[data-act]'); if (!el || !$('#app').contains(el)) return; actx(); const f = ACT[el.dataset.act]; if (f) f(el, e); });
 document.addEventListener('change', e => {
   const t = e.target;
   if (t.id === 'sndfile' && t.files[0]) {
-    const f = t.files[0]; if (f.size > 2.5 * 1048576) { say('الملف أكبر من ٢٫٥ ميجابايت', 'warn'); return; }
-    const fr = new FileReader(); fr.onload = () => { SND.push({ id: 'c:' + uid(), name: f.name.replace(/\.[^.]+$/, ''), data: fr.result }); if (!wr(LSSND, SND)) { SND.pop(); say('مساحة التخزين لا تكفي لهذا الملف', 'warn'); } else say('أُضيف الصوت'); render(); }; fr.readAsDataURL(f); return;
+    const f = t.files[0], id = 'c:' + uid(), nm = f.name.replace(/\.[^.]+$/, ''); IDB.put({ id, name: nm, blob: f }).then(() => { SND.push({ id, name: nm, data: URL.createObjectURL(f) }); say('أُضيف الصوت'); render(); }).catch(() => say('تعذّر حفظ الصوت', 'warn')); return;
   }
   if (t.id === 'impfile' && t.files[0]) { importData(t.files[0]); return; }
   if (t.dataset.ai) { const a = AIcfg(); a[t.dataset.ai] = t.value.trim(); if (t.dataset.ai === 'provider') a.model = ''; if (t.dataset.ai === 'key') { const d = detectProvider(a.key); if (d && d !== a.provider) { a.provider = d; a.model = ''; wr(LSAI, a); render(); say('تم اختيار المزوّد تلقائياً حسب المفتاح'); return; } } wr(LSAI, a); if (t.dataset.ai === 'provider') render(); else { document.body.classList.toggle('hidden-mic', !micAvail()); } return; }
@@ -1684,10 +1858,18 @@ document.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   if (e.target.id === 'qa') { e.preventDefault(); ACT.qadd(); } else if (e.target.id === 'ci') { e.preventDefault(); ACT.chat(); }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); render(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { tick(); render(); nativeSyncSoon(); } });
 
+function routeLink(n) {
+  closeSheet();
+  if (n === 'plan') openPlan('tomorrow'); else if (n === 'review') openReview(); else if (n === 'client') openCli(null); else if (n === 'gm') openGM();
+  else if (n === 'add' || n === 'voice') { tab = 'tasks'; render(); setTimeout(() => { const i = $('#qa'); if (i) i.focus(); if (n === 'voice') { const b = i && i.closest('.addbar') && i.closest('.addbar').querySelector('.mic'); b && b.click(); } }, 300); }
+  else if (n === 'today') { tab = 'today'; render(); }
+}
 /* ---- الإقلاع ---- */
-applyTheme(); pruneFired(); render(); initCaps(); tick();
+if (!ST.trackFrom) { ST.trackFrom = TODAY(); save(); }
+applyTheme(); pruneFired(); render(); initCaps(); tick(); nativeInit();
+try { const gm = /#go-(\w+)/.exec(location.hash); if (gm) { routeLink(gm[1]); history.replaceState(null, '', location.pathname); } if (NATIVE) { const AP = NP('App'); AP.addListener('appUrlOpen', e => { const m = /asad:\/\/(\w+)/.exec(e.url || ''); if (m) routeLink(m[1]); }); AP.getLaunchUrl().then(r => { const m = r && /asad:\/\/(\w+)/.exec(r.url || ''); if (m) routeLink(m[1]); }).catch(() => { }); } } catch (e) { }
 try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', e => { const id = e.data && e.data.taskId; if (id) openTaskAct(id); }); const m = /#t=([\w-]+)/.exec(location.hash); if (m) { openTaskAct(m[1]); history.replaceState(null, '', location.pathname); } } catch (e) { }
 setInterval(tick, 5000);
 setInterval(() => { updCd(); const n = NOW(); if (n.min !== lastMin) { lastMin = n.min; const a = document.activeElement; if ((tab === 'today' || tab === 'prayer') && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) && !$('.scrim')) render(); } }, 1000);
