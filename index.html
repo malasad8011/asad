@@ -549,7 +549,7 @@ function deepMerge(b, o) {
   const r = { ...b }; for (const k in o) r[k] = k in b ? deepMerge(b[k], o[k]) : o[k]; return r;
 }
 
-const APP_VER = '16 · تطبيق أصلي (APK) + تقرير PDF + نغمات بلا حد';
+const APP_VER = '17 · إصلاح الجسر الأصلي (صوت · جهات · PDF · تنبيهات)';
 if("serviceWorker"in navigator&&location.protocol.startsWith("http")&&!window.Capacitor)navigator.serviceWorker.register("sw.js").catch(()=>{});
 const LS = 'asad.state.v1', LSAI = 'asad.ai.v1', LSSND = 'asad.sounds.v1', LSFIRED = 'asad.fired.v1';
 const DEF = {
@@ -580,7 +580,8 @@ setTimeout(loadSnd, 0);
 
 /* ====== الجسر الأصلي (أندرويد) ====== */
 const NATIVE = !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform());
-const NP = n => Capacitor.registerPlugin(n);
+const NPC = {};
+const NP = n => NPC[n] || (NPC[n] = (() => { const C = window.Capacitor || {}; let p = C.Plugins && C.Plugins[n]; if (!p && C.registerPlugin) { try { p = C.registerPlugin(n); } catch (e) { } } return p || new Proxy({}, { get: (_, k) => () => Promise.reject(new Error('الإضافة غير متوفرة: ' + n + '.' + String(k))) }); })());
 let NSOK = false, nsT = null, NLASTERR = '', NERRSHOWN = 0;
 const hash32 = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return Math.abs(h) % 2147483000 + 1; };
 const CHANS = { prayer: ['الصلوات', 'prayer_bell'], task: ['مهامي (منبّه)', 'task_alarm'], routine: ['الفقرات الروتينية', 'routine_soft'], pre: ['تنبيه قبل الموعد', 'pre_chime'] };
@@ -594,6 +595,7 @@ const nerr = (w, e) => { try { say(w + ': ' + ((e && (e.message || e.code)) || e
 async function nativeInit() {
   if (!NATIVE) return;
   const LN = NP('LocalNotifications');
+  try { await NP('AsadNative').ping(); } catch (e) { nerr('الجسر الأصلي (حدّث AsadNative.java)', e); }
   try { const p = await LN.checkPermissions(); if (p.display !== 'granted') await LN.requestPermissions(); } catch (e) { nerr('إذن الإشعارات', e); }
   try { for (const [id, [name, snd]] of Object.entries(CHANS)) await LN.createChannel({ id: 'a_' + id, name, description: name, importance: 5, visibility: 1, sound: snd + '.wav', vibration: true, lights: true }); } catch (e) { nerr('قنوات التنبيه', e); }
   try { LN.addListener('localNotificationActionPerformed', e => { const x = ((e || {}).notification || {}).extra || {}; if (x.taskId) openTaskAct(x.taskId); else if (x.plan) openReview(); }); } catch (e) { }
