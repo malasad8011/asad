@@ -581,11 +581,11 @@ setTimeout(loadSnd, 0);
 /* ====== الجسر الأصلي (أندرويد) ====== */
 const NATIVE = !!(window.Capacitor && Capacitor.isNativePlatform && Capacitor.isNativePlatform());
 const NP = n => Capacitor.registerPlugin(n);
-let NSOK = false, nsT = null;
+let NSOK = false, nsT = null, NLASTERR = '', NERRSHOWN = 0;
 const hash32 = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0; return Math.abs(h) % 2147483000 + 1; };
 const CHANS = { prayer: ['الصلوات', 'prayer_bell'], task: ['مهامي (منبّه)', 'task_alarm'], routine: ['الفقرات الروتينية', 'routine_soft'], pre: ['تنبيه قبل الموعد', 'pre_chime'] };
 const chanOf = a => /\|p\|/.test(a.id) ? 'prayer' : (a.taskId && !a.pre) ? 'task' : (a.pre || /\|pre\|/.test(a.id)) ? 'pre' : 'routine';
-const ext = u => { if (NATIVE) { NP('AsadNative').openUri({ url: u }).catch(e => { if (/^intent:/.test(u)) { const m = /phone=(\d+)/.exec(u), t = /text=([^;&#]*)/.exec(u); NP('AsadNative').openUri({ url: m ? 'https://wa.me/' + m[1] + (t ? '?text=' + t[1] : '') : 'https://wa.me/' }).catch(e2 => nerr('فتح الرابط', e2)); } else nerr('فتح الرابط', e); }); } else if (/^intent:/.test(u)) location.href = u; else window.open(u, '_blank'); };
+const ext = u => { if (NATIVE) { NP('AsadNative').openUri({ url: u }).catch(e => { if (/^intent:/.test(u)) { const m = /phone=(\d+)/.exec(u), t = /text=([^;&#]*)/.exec(u); NP('AsadNative').openUri({ url: m ? 'https://wa.me/' + m[1] + (t ? '?text=' + t[1] : '') : 'https://wa.me/' }).catch(e2 => nerr('فتح الرابط', e2)); } else { try { NP('App').openUrl({ url: u }).catch(e3 => nerr('فتح الرابط', e3)); } catch (e4) { nerr('فتح الرابط', e); } } }); } else if (/^intent:/.test(u)) location.href = u; else window.open(u, '_blank'); };
 async function pickOne() {
   if (NATIVE) { try { const r = await NP('AsadNative').pickContact(); return { name: r.name || '', tel: r.tel || '' }; } catch (e) { nerr('جهات الاتصال', e); return null; } }
   const r = await navigator.contacts.select(['name', 'tel'], { multiple: false }); return r && r[0] ? { name: (r[0].name || [])[0] || '', tel: (r[0].tel || [])[0] || '' } : null;
@@ -607,25 +607,20 @@ async function nativeSync() {
     const LN = NP('LocalNotifications'), now = Date.now(), seen = new Set(), list = [];
     for (let i = 0; i < 3; i++) for (const a of alertsFor(addDays(TODAY(), i))) { if (a.at <= now + 3000 || seen.has(a.id)) continue; seen.add(a.id); list.push({ id: hash32(a.id), title: a.title, body: a.body || '', channelId: 'a_' + chanOf(a), schedule: { at: new Date(a.at), allowWhileIdle: true }, extra: { taskId: a.taskId || null, plan: !!a.plan } }); }
     const pend = await LN.getPending(); if (pend.notifications.length) await LN.cancel({ notifications: pend.notifications.map(n => ({ id: n.id })) });
-    for (let i = 0; i < list.length; i += 40) await LN.schedule({ notifications: list.slice(i, i + 40) });
+    for (let i = 0; i < list.length; i += 40) { const part = list.slice(i, i + 40); try { await LN.schedule({ notifications: part }); } catch (e1) { await LN.schedule({ notifications: part.map(x => ({ ...x, schedule: { at: x.schedule.at } })) }); } }
     NSOK = true;
-  } catch (e) { NSOK = false; nerr('جدولة التنبيهات', e); }
+  } catch (e) { NSOK = false; NLASTERR = (e && (e.message || e.code)) || String(e); if (!NERRSHOWN) { NERRSHOWN = 1; nerr('جدولة التنبيهات', e); } }
 }
 class NativeSR {
-  constructor() { this.lang = 'ar-SA'; this.on = false; this.last = ''; }
-  fire(t, fin) { this.onresult && this.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: t }], { isFinal: fin })] }); }
-  cleanup() { try { this.h1 && this.h1.remove(); this.h2 && this.h2.remove(); } catch (e) { } this.h1 = this.h2 = null; this.on = false; }
+  constructor() { this.lang = 'ar-SA'; }
   async start() {
-    const SP = NP('SpeechRecognition');
     try {
-      const p = await SP.requestPermissions(); if (p.speechRecognition === 'denied') { this.onerror && this.onerror({ error: 'not-allowed' }); return; }
-      this.on = true; this.last = '';
-      this.h1 = await SP.addListener('partialResults', d => { const t = (d.matches || [])[0]; if (t) { this.last = t; this.fire(t, false); } });
-      this.h2 = await SP.addListener('listeningState', d => { if (d.status === 'stopped' && this.on) { if (this.last) this.fire(this.last, true); this.last = ''; this.cleanup(); this.onend && this.onend(); } });
-      await SP.start({ language: this.lang, maxResults: 1, partialResults: true, popup: false });
-    } catch (e) { this.cleanup(); this.onerror && this.onerror({ error: 'x' }); this.onend && this.onend(); }
+      const r = await NP('AsadNative').speech();
+      if (r && r.text) { this.onresult && this.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: r.text }], { isFinal: true })] }); }
+      finishVoice(false);
+    } catch (e) { finishVoice(false); nerr('الإملاء الصوتي', e); }
   }
-  stop() { this.cleanup(); try { NP('SpeechRecognition').stop(); } catch (e) { } }
+  stop() { }
 }
 
 if (!ST.settings.lnV3) { if (!ST.links.some(l => l.kind === 'learn')) ST.links.push({ id: 'l4', name: 'يوتيوب', url: 'https://www.youtube.com/', kind: 'learn' }); ST.settings.lnV3 = 1; }
@@ -1616,7 +1611,7 @@ function vSettings() {
     ${fld('بدء تجهيز الغداء (للخرجة الصباحية)', inp('settings.friPrep', 'time'))}</section>
   ${NATIVE ? `<section class="card gap"><h2>${ic('bell')}<span>نغمات الجوال والصلاحيات</span></h2><div class="small muted">اختر لكل فئة أي نغمة من نغمات جوالك أو من ملفاتك، فتفتح لك إعدادات الجوال.</div>
     <div class="row wrap">${Object.entries(CHANS).map(([v, [l]]) => `<button class="btn sm ghost" data-act="natchan" data-v="${v}">${l}</button>`).join('')}</div>
-    <div class="row wrap"><button class="btn sm ghost" data-act="natexact">السماح بالتنبيهات الدقيقة</button><button class="btn sm ghost" data-act="natbatt">استثناء من توفير البطارية</button><button class="btn sm" data-act="nattest">تنبيه تجريبي</button></div></section>` : ''}
+    <div class="row wrap"><button class="btn sm ghost" data-act="natexact">السماح بالتنبيهات الدقيقة</button><button class="btn sm ghost" data-act="natbatt">استثناء من توفير البطارية</button><button class="btn sm" data-act="nattest">تنبيه تجريبي</button><button class="btn sm ghost" data-act="natdiag">فحص الجهاز</button></div></section>` : ''}
   <section class="card gap"><h2>${ic('copy')}<span>تقرير الإنجاز</span></h2><div class="small muted">ملف PDF مفصّل بما أنجزته وما قصّرت فيه وما يحتاج اهتماماً.</div><button class="btn block" data-act="reportopen">إنشاء تقرير PDF</button></section>
   <section class="card gap"><h2>${ic('phone')}<span>الواتساب والتواصل</span></h2>
     ${fld('إرسال الرسائل عبر', selb('settings.waApp', WAOPTS))}
@@ -1756,8 +1751,17 @@ const ACT = {
   extgo: el => ext(el.dataset.u),
   reportopen: () => openReport(),
   reportn: el => openReport(+el.dataset.v),
-  reportgo: async el => { el.disabled = true; const o = el.innerHTML; el.textContent = 'جارٍ إنشاء التقرير…'; try { if (NATIVE) { await NP('AsadNative').printHtml({ html: reportInner(reportData(RP_N)), name: `asad-report-${TODAY()}` }); say('اختر «حفظ بصيغة PDF» من نافذة الطباعة'); el.disabled = false; el.innerHTML = o; return; } const blob = await htmlToPdf(reportInner(reportData(RP_N))); await savePdf(blob, `asad-report-${TODAY()}.pdf`); say('تم إنشاء التقرير'); } catch (e) { say('تعذّر إنشاء PDF: ' + (e && e.message || ''), 'warn'); } el.disabled = false; el.innerHTML = o; },
+  reportgo: async el => { el.disabled = true; const o = el.innerHTML; el.textContent = 'جارٍ إنشاء التقرير…'; try { if (NATIVE) { try { await NP('AsadNative').printHtml({ html: reportInner(reportData(RP_N)), name: `asad-report-${TODAY()}` }); say('اختر «حفظ بصيغة PDF» من نافذة الطباعة'); el.disabled = false; el.innerHTML = o; return; } catch (e2) { nerr('الطباعة', e2); } } const blob = await htmlToPdf(reportInner(reportData(RP_N))); await savePdf(blob, `asad-report-${TODAY()}.pdf`); say('تم إنشاء التقرير'); } catch (e) { nerr('تعذّر إنشاء PDF', e); } el.disabled = false; el.innerHTML = o; },
   natchan: el => NP('AsadNative').channelSettings({ id: 'a_' + el.dataset.v }).catch(() => say('تعذّر فتح الإعدادات', 'warn')),
+  natdiag: async () => {
+    const L = [], LN = NP('LocalNotifications');
+    try { L.push('إذن الإشعارات: ' + (await LN.checkPermissions()).display); } catch (e) { L.push('إذن الإشعارات: خطأ ' + (e.message || e)); }
+    try { L.push('التنبيه الدقيق: ' + (await LN.checkExactNotificationSetting()).exact_alarm); } catch (e) { L.push('التنبيه الدقيق: ' + (e.message || e)); }
+    try { L.push('المجدول حالياً: ' + (await LN.getPending()).notifications.length); } catch (e) { }
+    try { await NP('AsadNative').ping(); L.push('الجسر الأصلي: يعمل'); } catch (e) { L.push('الجسر الأصلي: لا يعمل ' + (e.message || e)); }
+    L.push('آخر خطأ جدولة: ' + (NLASTERR || 'لا يوجد'));
+    openSheet(`<h2 class="h2">فحص الجهاز</h2><pre style="white-space:pre-wrap;direction:rtl;font-family:inherit">${esc(L.join('\n'))}</pre>`);
+  },
   natexact: () => { try { NP('LocalNotifications').changeExactNotificationSetting(); } catch (e) { } },
   natbatt: () => NP('AsadNative').batteryOpt().catch(() => { }),
   nattest: async () => { try { const LN = NP('LocalNotifications'); await LN.schedule({ notifications: [{ id: 7001, title: 'تنبيه تجريبي لمهامي', body: 'بنغمة المهام', channelId: 'a_task', schedule: { at: new Date(Date.now() + 10000), allowWhileIdle: true } }, { id: 7002, title: 'تنبيه تجريبي للصلاة', body: 'بنغمة الصلوات', channelId: 'a_prayer', schedule: { at: new Date(Date.now() + 20000), allowWhileIdle: true } }] }); say('ستصلك تنبيهات تجريبية بعد ١٠ و٢٠ ثانية. اخرج من التطبيق لتجربها'); } catch (e) { say('تعذّر الجدولة', 'warn'); } },

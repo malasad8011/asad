@@ -12,6 +12,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.provider.ContactsContract;
 import android.provider.Settings;
+import android.speech.RecognizerIntent;
+import java.util.ArrayList;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.*;
 import com.getcapacitor.annotation.ActivityCallback;
@@ -20,6 +22,33 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 @CapacitorPlugin(name = "AsadNative")
 public class AsadNative extends Plugin {
   private WebView keep;
+
+  @PluginMethod
+  public void ping(PluginCall call) { call.resolve(); }
+
+  @PluginMethod
+  public void speech(PluginCall call) {
+    try {
+      Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+      i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+      i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "ar-SA");
+      i.putExtra(RecognizerIntent.EXTRA_PROMPT, "تحدّث الآن");
+      i.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1);
+      i.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 4000L);
+      startActivityForResult(call, i, "speechDone");
+    } catch (Exception e) { call.reject(String.valueOf(e.getMessage())); }
+  }
+
+  @ActivityCallback
+  private void speechDone(PluginCall call, ActivityResult r) {
+    if (call == null) return;
+    JSObject o = new JSObject();
+    if (r.getResultCode() == android.app.Activity.RESULT_OK && r.getData() != null) {
+      ArrayList<String> l = r.getData().getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+      if (l != null && !l.isEmpty()) o.put("text", l.get(0));
+    }
+    call.resolve(o);
+  }
 
   @PluginMethod
   public void printHtml(final PluginCall call) {
