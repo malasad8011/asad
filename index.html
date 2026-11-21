@@ -1869,7 +1869,7 @@ function routeLink(n) {
 /* ---- الإقلاع ---- */
 if (!ST.trackFrom) { ST.trackFrom = TODAY(); save(); }
 applyTheme(); pruneFired(); render(); initCaps(); tick(); nativeInit();
-try { const gm = /#go-(\w+)/.exec(location.hash); if (gm) { routeLink(gm[1]); history.replaceState(null, '', location.pathname); } if (NATIVE) { const AP = NP('App'); AP.addListener('appUrlOpen', e => { const m = /asad:\/\/(\w+)/.exec(e.url || ''); if (m) routeLink(m[1]); }); AP.getLaunchUrl().then(r => { const m = r && /asad:\/\/(\w+)/.exec(r.url || ''); if (m) routeLink(m[1]); }).catch(() => { }); } } catch (e) { }
+try { const gm = /#go-(\w+)/.exec(location.hash); if (gm) { routeLink(gm[1]); history.replaceState(null, '', location.pathname); } if (NATIVE) { const AP = NP('App'); AP.addListener('backButton', () => { if ($('.scrim')) closeSheet(); else if (tab !== 'today') go('today'); else AP.exitApp(); }); AP.addListener('appUrlOpen', e => { const m = /asad:\/\/(\w+)/.exec(e.url || ''); if (m) routeLink(m[1]); }); AP.getLaunchUrl().then(r => { const m = r && /asad:\/\/(\w+)/.exec(r.url || ''); if (m) routeLink(m[1]); }).catch(() => { }); } } catch (e) { }
 try { if (navigator.serviceWorker) navigator.serviceWorker.addEventListener('message', e => { const id = e.data && e.data.taskId; if (id) openTaskAct(id); }); const m = /#t=([\w-]+)/.exec(location.hash); if (m) { openTaskAct(m[1]); history.replaceState(null, '', location.pathname); } } catch (e) { }
 setInterval(tick, 5000);
 setInterval(() => { updCd(); const n = NOW(); if (n.min !== lastMin) { lastMin = n.min; const a = document.activeElement; if ((tab === 'today' || tab === 'prayer') && !(a && /INPUT|TEXTAREA|SELECT/.test(a.tagName)) && !$('.scrim')) render(); } }, 1000);
